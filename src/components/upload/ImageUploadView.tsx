@@ -362,7 +362,7 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
               <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
               {extractionProgressText || t.upload_extracting}
             </span>
-            <span className="text-indigo-600 font-mono">Gemini Multimodal OCR</span>
+            <span className="text-indigo-600 font-mono">AI Multimodal OCR</span>
           </div>
           <div className="w-full bg-indigo-200/60 rounded-full h-2 overflow-hidden">
             <div className="bg-indigo-600 h-2 rounded-full animate-pulse w-3/4 transition-all duration-300" />

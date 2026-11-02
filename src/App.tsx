@@ -230,7 +230,7 @@ export function AppContent() {
     }
 
     setIsExtracting(true);
-    setExtractionProgressText('Connecting to the backend Gemini service...');
+    setExtractionProgressText('Connecting to the backend AI service...');
     setExtractionWarnings([]);
     setExtractionRejected([]);
 
@@ -248,7 +248,7 @@ export function AppContent() {
       const validatedItems: QuestionItem[] = result.questions.map((question, index) =>
         validateAndStore({
           ...question,
-          id: question.id || `q_gemini_${Date.now()}_${index + 1}`,
+          id: question.id || `q_ai_${Date.now()}_${index + 1}`,
           reviewed: false,
         })
       );

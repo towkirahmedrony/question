@@ -224,7 +224,7 @@ export const QuestionEditor: React.FC<QuestionEditorProps> = ({
               {t.review_manual_answer_alert}
             </span>
             <p className="text-amber-800 leading-relaxed text-xs">
-              Gemini Vision detected no unambiguous printed answer key on this question. Please tap the correct option below to verify and approve.
+              The AI found no unambiguous printed answer key on this question. Please tap the correct option below to verify and approve.
             </p>
           </div>
         </div>

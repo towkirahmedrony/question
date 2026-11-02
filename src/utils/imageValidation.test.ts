@@ -13,7 +13,7 @@ const image = (overrides: { name?: string; type?: string; size?: number } = {}) 
   ...overrides,
 });
 
-test('accepts the formats Gemini supports', () => {
+test('accepts the formats the extractor supports', () => {
   for (const type of ['image/jpeg', 'image/png', 'image/webp']) {
     assert.deepEqual(validateImageFile(image({ type })), { ok: true });
   }

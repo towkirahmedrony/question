@@ -113,7 +113,7 @@ export interface QuestionItem extends QuestionData {
   validation_status: ValidationStatus;
   validation_errors: string[];
   validation_warnings: string[];
-  requires_manual_answer_verification?: boolean; // Flagged when Gemini OCR did not detect an unambiguous printed answer
+  requires_manual_answer_verification?: boolean; // Flagged when the OCR model did not detect an unambiguous printed answer
   uncertain_ocr_flags?: string[]; // Visual flags for smudged or uncertain text/equations
   is_duplicate?: boolean;
   reviewed: boolean;

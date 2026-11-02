@@ -91,7 +91,7 @@ export function validateQuestion(q: Partial<QuestionItem>): ValidationResult {
     }
   }
 
-  // Flag for manual answer verification from Gemini OCR
+  // Flag for manual answer verification from the AI OCR extraction
   if (q.requires_manual_answer_verification) {
     warnings.push('Answer not explicitly printed on paper or was ambiguous — requires manual review.');
   }

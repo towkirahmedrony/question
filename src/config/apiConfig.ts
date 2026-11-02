@@ -2,8 +2,8 @@
  * Runtime configuration for the importer.
  *
  * Only publishable values live here: the Supabase anon key is a public client
- * key, and every privileged operation goes through porokh-backend. No Gemini or
- * service-role secret is ever read by this app.
+ * key, and every privileged operation goes through porokh-backend. No AI
+ * provider or service-role secret is ever read by this app.
  */
 
 const readEnv = (value: string | undefined): string =>

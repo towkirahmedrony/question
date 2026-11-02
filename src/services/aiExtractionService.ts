@@ -16,11 +16,11 @@ import {
 import { MAX_IMAGE_BYTES, normalizeImageMimeType, validateImageFile } from '../utils/imageValidation';
 
 /**
- * Backend Gemini extraction for the AI Question Importer.
+ * Backend AI extraction for the AI Question Importer.
  *
  * One question-paper image is sent inline to `POST /ai/extract-questions` with
- * the caller's Supabase bearer token. The Gemini key stays on the server; this
- * module only knows the sanitised question payload the backend returns.
+ * the caller's Supabase bearer token. The provider key stays on the server;
+ * this module only knows the sanitised question payload the backend returns.
  */
 
 export interface ExtractionOptions {
@@ -236,7 +236,7 @@ const toQuestionItem = (
 };
 
 /**
- * Calls the backend Gemini extraction endpoint for one image.
+ * Calls the backend extraction endpoint for one image.
  *
  * The backend enforces authentication, the `questions.manage` permission, the
  * rate limit and its own timeout; this function adds a client deadline and maps
@@ -250,7 +250,7 @@ export async function extractQuestionsViaBackendApi(
   onProgress?.('Preparing the question-paper image...');
   const encoded = await encodeImage(image);
 
-  onProgress?.('Sending the image to Gemini for bilingual extraction...');
+  onProgress?.('Sending the image to the AI for bilingual extraction...');
 
   const response = await apiRequest<ExtractionResponseDto>('/ai/extract-questions', {
     method: 'POST',
@@ -287,7 +287,7 @@ export async function extractQuestionsViaBackendApi(
 
   return {
     success: true,
-    model: response.model ?? 'gemini-2.5-flash',
+    model: response.model ?? 'ai-vision-model',
     questions,
     images: response.images ?? [],
     rejected: response.rejected ?? [],
