@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLanguage } from '../../i18n/useLanguage';
 import type { QuestionItem } from '../../types/question';
+import type { ExtractionRejection } from '../../services/aiExtractionService';
 import { QuestionEditor } from './QuestionEditor';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { RawJsonEditorModal } from './RawJsonEditorModal';
@@ -22,6 +23,8 @@ import {
 
 interface QuestionReviewViewProps {
   questions: QuestionItem[];
+  extractionWarnings?: string[];
+  extractionRejected?: ExtractionRejection[];
   onUpdateQuestion: (index: number, updated: QuestionItem) => void;
   onDeleteQuestion: (index: number) => void;
   onAddQuestion: () => void;
@@ -31,6 +34,8 @@ interface QuestionReviewViewProps {
 
 export const QuestionReviewView: React.FC<QuestionReviewViewProps> = ({
   questions,
+  extractionWarnings = [],
+  extractionRejected = [],
   onUpdateQuestion,
   onDeleteQuestion,
   onAddQuestion,
@@ -116,6 +121,30 @@ export const QuestionReviewView: React.FC<QuestionReviewViewProps> = ({
     (q) => q.requires_manual_answer_verification || !q.options.some((o) => o.isCorrect)
   ).length;
 
+  const confidenceBadge = (confidence: QuestionItem['confidence']) => {
+    if (!confidence) return null;
+
+    const styles: Record<NonNullable<QuestionItem['confidence']>, string> = {
+      high: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      medium: 'bg-amber-50 text-amber-700 border-amber-200',
+      low: 'bg-rose-50 text-rose-700 border-rose-200',
+    };
+    const labels: Record<NonNullable<QuestionItem['confidence']>, string> = {
+      high: t.review_confidence_high,
+      medium: t.review_confidence_medium,
+      low: t.review_confidence_low,
+    };
+
+    return (
+      <span
+        className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded border ${styles[confidence]}`}
+        title={t.review_confidence}
+      >
+        {labels[confidence]}
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-6 pb-16">
       {/* Header Bar */}
@@ -158,6 +187,38 @@ export const QuestionReviewView: React.FC<QuestionReviewViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Extraction notes from this image (warnings and unreadable items) */}
+      {(extractionWarnings.length > 0 || extractionRejected.length > 0) && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 space-y-2">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-sky-900">
+            <AlertTriangle className="w-4 h-4 text-sky-600" />
+            <span>{t.review_extraction_warnings}</span>
+          </div>
+
+          {extractionWarnings.length > 0 && (
+            <ul className="list-disc list-inside text-xs text-sky-800 space-y-0.5">
+              {extractionWarnings.map((warning, index) => (
+                <li key={index}>{warning}</li>
+              ))}
+            </ul>
+          )}
+
+          {extractionRejected.length > 0 && (
+            <div className="pt-2 border-t border-sky-200 space-y-1">
+              <p className="text-xs font-bold text-sky-900">{t.review_rejected_title}</p>
+              <p className="text-[11px] text-sky-800">{t.review_rejected_desc}</p>
+              <ul className="list-disc list-inside text-xs text-sky-900 space-y-0.5">
+                {extractionRejected.map((entry) => (
+                  <li key={`${entry.index}-${entry.reason}`}>
+                    #{entry.index + 1}: {entry.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filter and Question Carousel Strip */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-3 sm:p-4 shadow-xs space-y-3">
@@ -294,6 +355,12 @@ export const QuestionReviewView: React.FC<QuestionReviewViewProps> = ({
                   ? 'Warning'
                   : 'Invalid'}
               </Badge>
+              {currentQuestion.question_number && (
+                <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                  {t.review_source_number} {currentQuestion.question_number}
+                </span>
+              )}
+              {confidenceBadge(currentQuestion.confidence)}
               {currentQuestion.reviewed && (
                 <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                   <CheckCircle2 className="w-3 h-3" />

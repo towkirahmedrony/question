@@ -17,7 +17,10 @@ import type {
   UploadedImage,
 } from './types/question';
 import { validateForImport } from './utils/validation';
-import { extractQuestionsViaBackendApi } from './services/aiExtractionService';
+import {
+  extractQuestionsViaBackendApi,
+  type ExtractionRejection,
+} from './services/aiExtractionService';
 import { fetchImportHistory } from './services/importService';
 import { readErrorMessage } from './services/apiClient';
 import {
@@ -41,9 +44,11 @@ export function AppContent() {
 
   const [currentTab, setCurrentTab] = useState<ImporterTab>('dashboard');
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
-  const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
+  const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionProgressText, setExtractionProgressText] = useState<string>('');
+  const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
+  const [extractionRejected, setExtractionRejected] = useState<ExtractionRejection[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const [history, setHistory] = useState<ImportHistoryEntry[]>([]);
@@ -114,7 +119,9 @@ export function AppContent() {
         setSession(null);
         setIdentity(null);
         setQuestions([]);
-        setUploadedImages([]);
+        setUploadedImage(null);
+        setExtractionWarnings([]);
+        setExtractionRejected([]);
         setAuthError(t.auth_session_expired);
       }),
     [t.auth_session_expired]
@@ -153,7 +160,9 @@ export function AppContent() {
     setSession(null);
     setIdentity(null);
     setQuestions([]);
-    setUploadedImages([]);
+    setUploadedImage(null);
+    setExtractionWarnings([]);
+    setExtractionRejected([]);
     setHistory([]);
     setCurrentTab('dashboard');
     setAuthError(null);
@@ -215,22 +224,24 @@ export function AppContent() {
   };
 
   const handleExtractQuestions = async () => {
-    if (uploadedImages.length === 0) {
-      addToast('Please upload at least one image first', 'warning');
+    if (!uploadedImage) {
+      addToast(t.upload_error_no_image, 'warning');
       return;
     }
 
     setIsExtracting(true);
     setExtractionProgressText('Connecting to the backend Gemini service...');
+    setExtractionWarnings([]);
+    setExtractionRejected([]);
 
-    setUploadedImages((prev) =>
-      prev.map((img) => ({ ...img, status: 'processing', errorMessage: undefined }))
+    setUploadedImage((prev) =>
+      prev ? { ...prev, status: 'processing', errorMessage: undefined } : prev
     );
 
     try {
       const result = await extractQuestionsViaBackendApi(
-        uploadedImages,
-        { generateMissingExplanations: true },
+        uploadedImage,
+        {},
         (progress: string) => setExtractionProgressText(progress)
       );
 
@@ -242,22 +253,20 @@ export function AppContent() {
         })
       );
 
-      // Per-image status comes from the backend, not an average across pages.
-      setUploadedImages((prev) =>
-        prev.map((img) => {
-          const status = result.images.find((entry) => entry.image_id === img.id);
-          if (!status) return img;
-
-          return {
-            ...img,
-            status: status.status,
-            extractedQuestionCount: status.question_count,
-            errorMessage: undefined,
-          };
-        })
+      setUploadedImage((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: validatedItems.length > 0 ? 'extracted' : 'empty',
+              extractedQuestionCount: validatedItems.length,
+              errorMessage: undefined,
+            }
+          : prev
       );
 
       setQuestions(validatedItems);
+      setExtractionWarnings(result.warnings);
+      setExtractionRejected(result.rejected);
       setCurrentTab('review');
 
       const missingAnswerCount = validatedItems.filter(
@@ -267,27 +276,32 @@ export function AppContent() {
       ).length;
 
       if (validatedItems.length === 0) {
-        addToast('No questions were found. Try clearer photos or another page.', 'warning');
+        addToast(t.upload_no_questions, 'warning');
       } else if (missingAnswerCount > 0) {
         addToast(
-          `Extracted ${validatedItems.length} questions. ${missingAnswerCount} need a manual answer key.`,
+          t.upload_extracted_missing_answers
+            .replace('{count}', String(validatedItems.length))
+            .replace('{missing}', String(missingAnswerCount)),
           'warning'
         );
       } else {
-        addToast(`Successfully extracted ${validatedItems.length} questions.`, 'success');
+        addToast(
+          t.upload_extracted_success.replace('{count}', String(validatedItems.length)),
+          'success'
+        );
       }
 
       if (result.rejected.length > 0) {
-        addToast(`${result.rejected.length} question(s) could not be read and were skipped.`, 'warning');
+        addToast(
+          t.upload_rejected_notice.replace('{count}', String(result.rejected.length)),
+          'warning'
+        );
       }
     } catch (error) {
-      const message = readErrorMessage(
-        error,
-        'Gemini extraction failed. Please check the backend connection.'
-      );
+      const message = readErrorMessage(error, t.upload_extraction_failed);
 
-      setUploadedImages((prev) =>
-        prev.map((img) => ({ ...img, status: 'error', errorMessage: message }))
+      setUploadedImage((prev) =>
+        prev ? { ...prev, status: 'error', errorMessage: message } : prev
       );
 
       addToast(message, 'error');
@@ -297,76 +311,27 @@ export function AppContent() {
     }
   };
 
-  const handleRetrySingleImage = async (imageId: string) => {
-    const targetImage = uploadedImages.find((img) => img.id === imageId);
-    if (!targetImage) return;
+  const handleSelectImage = (image: UploadedImage) => {
+    if (uploadedImage?.previewUrl) URL.revokeObjectURL(uploadedImage.previewUrl);
 
-    setUploadedImages((prev) =>
-      prev.map((img) =>
-        img.id === imageId ? { ...img, status: 'processing', errorMessage: undefined } : img
-      )
-    );
-
-    try {
-      const result = await extractQuestionsViaBackendApi(
-        [targetImage],
-        { generateMissingExplanations: true },
-        (progress: string) => setExtractionProgressText(progress)
-      );
-
-      const validatedNew = result.questions.map((question, index) =>
-        validateAndStore({
-          ...question,
-          id: question.id || `q_gemini_retry_${Date.now()}_${index + 1}`,
-          reviewed: false,
-        })
-      );
-
-      setQuestions((prev) => [...prev, ...validatedNew]);
-      setUploadedImages((prev) =>
-        prev.map((img) =>
-          img.id === imageId
-            ? {
-                ...img,
-                status: validatedNew.length > 0 ? 'extracted' : 'empty',
-                extractedQuestionCount: validatedNew.length,
-                errorMessage: undefined,
-              }
-            : img
-        )
-      );
-
-      addToast(
-        validatedNew.length > 0
-          ? `Retried ${targetImage.name}: extracted ${validatedNew.length} question(s)`
-          : `Retried ${targetImage.name}: no questions found on this image`,
-        validatedNew.length > 0 ? 'success' : 'warning'
-      );
-    } catch (error) {
-      const message = readErrorMessage(error, 'Retry failed');
-      setUploadedImages((prev) =>
-        prev.map((img) =>
-          img.id === imageId ? { ...img, status: 'error', errorMessage: message } : img
-        )
-      );
-      addToast(message, 'error');
-    } finally {
-      setExtractionProgressText('');
-    }
+    setUploadedImage(image);
+    setQuestions([]);
+    setExtractionWarnings([]);
+    setExtractionRejected([]);
+    addToast(t.upload_image_ready, 'success');
   };
 
-  const handleAddUploadedImages = (newImages: UploadedImage[]) => {
-    setUploadedImages((prev) => [...prev, ...newImages]);
-    addToast(`${newImages.length} image(s) added successfully`, 'success');
+  const handleRemoveImage = () => {
+    if (uploadedImage?.previewUrl) URL.revokeObjectURL(uploadedImage.previewUrl);
+    setUploadedImage(null);
   };
 
-  const handleRemoveUploadedImage = (id: string) => {
-    setUploadedImages((prev) => prev.filter((img) => img.id !== id));
-  };
-
-  const handleClearUploadedImages = () => {
-    setUploadedImages([]);
-    addToast('Cleared all uploaded images', 'info');
+  const handleResetBatch = () => {
+    if (uploadedImage?.previewUrl) URL.revokeObjectURL(uploadedImage.previewUrl);
+    setUploadedImage(null);
+    setQuestions([]);
+    setExtractionWarnings([]);
+    setExtractionRejected([]);
   };
 
   const handleImportFinished = (remaining: QuestionItem[]) => {
@@ -411,13 +376,11 @@ export function AppContent() {
 
         {currentTab === 'upload' && (
           <ImageUploadView
-            images={uploadedImages}
-            onAddImages={handleAddUploadedImages}
-            onRemoveImage={handleRemoveUploadedImage}
-            onClearImages={handleClearUploadedImages}
+            image={uploadedImage}
+            onSelectImage={handleSelectImage}
+            onRemoveImage={handleRemoveImage}
             onProceedToReview={() => setCurrentTab('review')}
             onExtractQuestions={handleExtractQuestions}
-            onRetrySingleImage={handleRetrySingleImage}
             isExtracting={isExtracting}
             extractionProgressText={extractionProgressText}
             questionCount={questions.length}
@@ -427,6 +390,8 @@ export function AppContent() {
         {currentTab === 'review' && (
           <QuestionReviewView
             questions={questions}
+            extractionWarnings={extractionWarnings}
+            extractionRejected={extractionRejected}
             onUpdateQuestion={handleUpdateQuestion}
             onDeleteQuestion={handleDeleteQuestion}
             onAddQuestion={handleAddQuestion}
@@ -440,8 +405,7 @@ export function AppContent() {
             questions={questions}
             onReturnToReview={() => setCurrentTab('review')}
             onStartNewBatch={() => {
-              setQuestions([]);
-              setUploadedImages([]);
+              handleResetBatch();
               setCurrentTab('upload');
             }}
             onImportFinished={handleImportFinished}

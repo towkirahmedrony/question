@@ -70,6 +70,8 @@ export interface SourceMetadata {
 
 export type ValidationStatus = 'valid' | 'warning' | 'invalid';
 
+export type ExtractionConfidence = 'high' | 'medium' | 'low';
+
 /**
  * Exact question schema the importer submits.
  *
@@ -103,9 +105,11 @@ export interface ImportQuestionPayload extends QuestionData {
  */
 export interface QuestionItem extends QuestionData {
   id: string; // Temporary client-side UUID
+  question_number?: string; // Number printed on the paper, kept for traceability
   source_image_id?: string; // Reference to uploaded image ID
   source_image_name?: string; // Reference to uploaded image filename
-  source_image_index?: number; // Order index in the uploaded image sequence
+  source_image_index?: number; // Always 0 in the single-image flow
+  confidence?: ExtractionConfidence; // Backend-derived extraction confidence
   validation_status: ValidationStatus;
   validation_errors: string[];
   validation_warnings: string[];

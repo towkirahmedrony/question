@@ -112,7 +112,16 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
     onShowToast('JSON file downloaded successfully', 'success');
   };
 
+  /** Nothing may be imported until every question in the batch has been reviewed. */
+  const reviewGateMessage = () =>
+    t.imp_review_gate.replace('{count}', String(pendingReviewCount));
+
   const openImportModal = () => {
+    if (pendingReviewCount > 0) {
+      onShowToast(reviewGateMessage(), 'warning');
+      return;
+    }
+
     setShowImportModal(true);
     setPrecheck(null);
     setResult(null);
@@ -148,6 +157,11 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
 
   const runImport = async (batch: QuestionItem[]) => {
     if (submitLock.current || batch.length === 0) return;
+
+    if (batch.some((question) => !question.reviewed)) {
+      onShowToast(reviewGateMessage(), 'warning');
+      return;
+    }
 
     submitLock.current = true;
     setIsImporting(true);
@@ -201,7 +215,7 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
   };
 
   const handleImportSingle = (question: QuestionItem) => {
-    if (question.validation_errors.length > 0) return;
+    if (question.validation_errors.length > 0 || !question.reviewed) return;
     openImportModal();
     void runImport([question]);
   };
@@ -332,6 +346,9 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
           <p className="text-xs text-indigo-200">
             {t.imp_check_desc} ({importable.length}/{questions.length})
           </p>
+          {pendingReviewCount > 0 && (
+            <p className="text-[11px] font-semibold text-amber-300">{reviewGateMessage()}</p>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2.5">
@@ -361,7 +378,9 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
 
           <button
             onClick={openImportModal}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-bold shadow-md active:scale-98 transition-all"
+            disabled={pendingReviewCount > 0}
+            title={pendingReviewCount > 0 ? reviewGateMessage() : undefined}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-bold shadow-md active:scale-98 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
             <span>{t.imp_check_button}</span>
@@ -427,7 +446,8 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleImportSingle(question)}
-                      disabled={!canImport || isImporting}
+                      disabled={!canImport || isImporting || !question.reviewed}
+                      title={!question.reviewed ? t.review_reviewed_checkbox : undefined}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-700 text-[11px] font-semibold transition-colors"
                     >
                       <UploadCloud className="w-3 h-3" />

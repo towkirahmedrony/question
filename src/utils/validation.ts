@@ -96,6 +96,10 @@ export function validateQuestion(q: Partial<QuestionItem>): ValidationResult {
     warnings.push('Answer not explicitly printed on paper or was ambiguous — requires manual review.');
   }
 
+  if (q.confidence === 'low') {
+    warnings.push('Low extraction confidence — verify the question text, options and answer key.');
+  }
+
   // OCR uncertainty flags
   if (q.uncertain_ocr_flags && q.uncertain_ocr_flags.length > 0) {
     q.uncertain_ocr_flags.forEach((flag) => {

@@ -1,6 +1,7 @@
 import type {
   DifficultyLevel,
   ExamReference,
+  ExtractionConfidence,
   QuestionItem,
   SourceMetadata,
   SourceType,
@@ -12,13 +13,14 @@ import {
   SOURCE_TYPE_VALUES,
   validateQuestion,
 } from '../utils/validation';
+import { MAX_IMAGE_BYTES, normalizeImageMimeType, validateImageFile } from '../utils/imageValidation';
 
 /**
  * Backend Gemini extraction for the AI Question Importer.
  *
- * Images are sent inline to `POST /ai/extract-questions` with the caller's
- * Supabase bearer token. The Gemini key stays on the server; this module only
- * knows the sanitised question payload the backend returns.
+ * One question-paper image is sent inline to `POST /ai/extract-questions` with
+ * the caller's Supabase bearer token. The Gemini key stays on the server; this
+ * module only knows the sanitised question payload the backend returns.
  */
 
 export interface ExtractionOptions {
@@ -28,7 +30,6 @@ export interface ExtractionOptions {
     year?: string | number;
     subject?: string;
   };
-  generateMissingExplanations?: boolean;
 }
 
 export interface ExtractionImageStatus {
@@ -58,15 +59,10 @@ export interface ExtractionResult {
   };
 }
 
-/** Server limits, mirrored here so an oversized upload fails before the request. */
-const MAX_IMAGES = 10;
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
 
-const ACCEPTED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-
 interface ExtractedQuestionDto {
+  question_number?: string;
   type?: string;
   body?: { text_bn?: string; text_en?: string; image_url?: string | null };
   options?: Array<{ id?: number; text_bn?: string; text_en?: string; isCorrect?: boolean }>;
@@ -78,6 +74,7 @@ interface ExtractedQuestionDto {
   source_metadata?: SourceMetadata;
   requires_manual_answer_verification?: boolean;
   uncertain_ocr_flags?: string[];
+  confidence?: string;
   source_image_index?: number;
 }
 
@@ -114,7 +111,7 @@ export async function convertFileToBase64(file: File): Promise<{ base64Data: str
       const base64Data = result.includes(';base64,') ? result.split(';base64,')[1] : result;
       resolve({
         base64Data,
-        mimeType: file.type || 'image/jpeg',
+        mimeType: normalizeImageMimeType(file.type || 'image/jpeg'),
       });
     };
     reader.onerror = () => reject(new Error(`Could not read "${file.name}".`));
@@ -129,19 +126,22 @@ const base64Bytes = (base64: string): number => {
 };
 
 const encodeImage = async (image: UploadedImage): Promise<EncodedImage> => {
-  const mimeType = (image.type || 'image/jpeg').toLowerCase();
+  const validation = validateImageFile({ name: image.name, type: image.type, size: image.size });
 
-  if (!ACCEPTED_MIME_TYPES.includes(mimeType)) {
+  if ('reason' in validation) {
+    if (validation.reason === 'size') {
+      throw new Error(`"${image.name}" is larger than 6MB. Please upload a smaller photo.`);
+    }
     throw new Error(`"${image.name}" is not a supported image type. Use JPG, PNG or WEBP.`);
   }
 
   let data = image.base64Data ?? '';
-  let mime = mimeType;
+  let mime = normalizeImageMimeType(image.type || 'image/jpeg');
 
   if (!data && image.rawFile) {
     const converted = await convertFileToBase64(image.rawFile);
     data = converted.base64Data;
-    mime = converted.mimeType.toLowerCase();
+    mime = converted.mimeType;
   }
 
   if (!data) {
@@ -149,7 +149,7 @@ const encodeImage = async (image: UploadedImage): Promise<EncodedImage> => {
     const blob = await response.blob();
     const converted = await convertFileToBase64(new File([blob], image.name, { type: blob.type }));
     data = converted.base64Data;
-    mime = converted.mimeType.toLowerCase();
+    mime = converted.mimeType;
   }
 
   if (!data) throw new Error(`Unable to load image data for "${image.name}".`);
@@ -161,7 +161,7 @@ const encodeImage = async (image: UploadedImage): Promise<EncodedImage> => {
   return {
     image_id: image.id,
     file_name: image.name,
-    mime_type: mime.includes('png') ? 'image/png' : mime.includes('webp') ? 'image/webp' : 'image/jpeg',
+    mime_type: mime,
     data,
     source: image,
   };
@@ -173,20 +173,15 @@ const asDifficulty = (value: unknown): DifficultyLevel =>
 const asSourceType = (value: unknown): SourceType =>
   SOURCE_TYPE_VALUES.includes(value as SourceType) ? (value as SourceType) : 'unknown';
 
+const asConfidence = (value: unknown): ExtractionConfidence | undefined =>
+  value === 'high' || value === 'medium' || value === 'low' ? value : undefined;
+
 const toQuestionItem = (
   dto: ExtractedQuestionDto,
   index: number,
-  images: EncodedImage[],
+  image: EncodedImage,
   batch: NonNullable<ExtractionResponseDto['batch_source_info']>
 ): QuestionItem => {
-  const imageIndex =
-    typeof dto.source_image_index === 'number' &&
-    dto.source_image_index >= 0 &&
-    dto.source_image_index < images.length
-      ? dto.source_image_index
-      : 0;
-  const sourceImage = images[imageIndex];
-
   const metadata = dto.source_metadata ?? {};
   const sourceMetadata: SourceMetadata = {
     institution: metadata.institution ?? batch.institution,
@@ -196,6 +191,7 @@ const toQuestionItem = (
 
   const item: QuestionItem = {
     id: `q_extracted_${Date.now()}_${index}`,
+    question_number: dto.question_number || undefined,
     type: 'mcq',
     body: {
       text_bn: dto.body?.text_bn ?? '',
@@ -221,9 +217,10 @@ const toQuestionItem = (
       : {}),
     requires_manual_answer_verification: dto.requires_manual_answer_verification === true,
     uncertain_ocr_flags: Array.isArray(dto.uncertain_ocr_flags) ? dto.uncertain_ocr_flags : [],
-    source_image_id: sourceImage?.image_id,
-    source_image_name: sourceImage?.file_name,
-    source_image_index: imageIndex,
+    confidence: asConfidence(dto.confidence),
+    source_image_id: image.image_id,
+    source_image_name: image.file_name,
+    source_image_index: 0,
     validation_status: 'valid',
     validation_errors: [],
     validation_warnings: [],
@@ -239,49 +236,34 @@ const toQuestionItem = (
 };
 
 /**
- * Calls the backend Gemini extraction endpoint for the supplied images.
+ * Calls the backend Gemini extraction endpoint for one image.
  *
  * The backend enforces authentication, the `questions.manage` permission, the
  * rate limit and its own timeout; this function adds a client deadline and maps
  * the sanitised response into the review interface's `QuestionItem`.
  */
 export async function extractQuestionsViaBackendApi(
-  images: UploadedImage[],
+  image: UploadedImage,
   options: ExtractionOptions = {},
   onProgress?: (progress: string) => void
 ): Promise<ExtractionResult> {
-  if (images.length === 0) throw new Error('Please select at least one image.');
-  if (images.length > MAX_IMAGES) throw new Error(`Maximum ${MAX_IMAGES} images per extraction.`);
+  onProgress?.('Preparing the question-paper image...');
+  const encoded = await encodeImage(image);
 
-  const encodedImages: EncodedImage[] = [];
-  let totalBytes = 0;
-
-  for (let index = 0; index < images.length; index += 1) {
-    onProgress?.(`Encoding image ${index + 1} of ${images.length}...`);
-    const encoded = await encodeImage(images[index]);
-    totalBytes += base64Bytes(encoded.data);
-
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      throw new Error('These images are too large together. Remove one or upload smaller photos.');
-    }
-
-    encodedImages.push(encoded);
-  }
-
-  onProgress?.(
-    `Sending ${encodedImages.length} image(s) to Gemini for bilingual extraction...`
-  );
+  onProgress?.('Sending the image to Gemini for bilingual extraction...');
 
   const response = await apiRequest<ExtractionResponseDto>('/ai/extract-questions', {
     method: 'POST',
     timeoutMs: REQUEST_TIMEOUT_MS,
     body: {
-      images: encodedImages.map(({ image_id, file_name, mime_type, data }) => ({
-        image_id,
-        file_name,
-        mime_type,
-        data,
-      })),
+      images: [
+        {
+          image_id: encoded.image_id,
+          file_name: encoded.file_name,
+          mime_type: encoded.mime_type,
+          data: encoded.data,
+        },
+      ],
       source_hint: options.sourceHint
         ? {
             institution: options.sourceHint.institution,
@@ -293,13 +275,12 @@ export async function extractQuestionsViaBackendApi(
             subject: options.sourceHint.subject,
           }
         : undefined,
-      generate_missing_explanations: options.generateMissingExplanations !== false,
     },
   });
 
   const batch = response.batch_source_info ?? {};
   const questions = (response.questions ?? []).map((dto, index) =>
-    toQuestionItem(dto, index, encodedImages, batch)
+    toQuestionItem(dto, index, encoded, batch)
   );
 
   onProgress?.(`Validated ${questions.length} question(s). Opening review...`);
