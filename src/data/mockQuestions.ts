@@ -25,7 +25,10 @@ export const MOCK_QUESTIONS: QuestionItem[] = [
     },
     difficulty_level: 'easy',
     source_type: 'board_exam',
-    exam_references: ['Dhaka Board 2023', 'Rajshahi Board 2021'],
+    exam_references: [
+      { source_kind: 'board', board: 'Dhaka Board', year: '2023' },
+      { source_kind: 'board', board: 'Rajshahi Board', year: '2021' },
+    ],
     tags: ['vectors', 'dot-product', 'hsc-physics'],
     source_metadata: {
       institution: 'Dhaka Education Board',
@@ -60,7 +63,9 @@ export const MOCK_QUESTIONS: QuestionItem[] = [
     },
     difficulty_level: 'medium',
     source_type: 'admission',
-    exam_references: ['BUET Admission 2021-22'],
+    exam_references: [
+      { source_kind: 'admission', institution_name: 'BUET', exam_name: 'Admission Test', year: '2021-22' },
+    ],
     tags: ['rotational-mechanics', 'torque', 'newtonian-mechanics'],
     source_metadata: {
       institution: 'BUET',
@@ -95,7 +100,7 @@ export const MOCK_QUESTIONS: QuestionItem[] = [
     },
     difficulty_level: 'easy',
     source_type: 'board_exam',
-    exam_references: ['Chittagong Board 2022'],
+    exam_references: [{ source_kind: 'board', board: 'Chittagong Board', year: '2022' }],
     tags: ['chemistry', 'quantum-numbers', 'orbitals'],
     source_metadata: {
       institution: 'Chittagong Education Board',
@@ -130,7 +135,9 @@ export const MOCK_QUESTIONS: QuestionItem[] = [
     },
     difficulty_level: 'hard',
     source_type: 'admission',
-    exam_references: ['Dhaka University A-Unit 2020'],
+    exam_references: [
+      { source_kind: 'admission', institution_name: 'Dhaka University', exam_name: 'A Unit', year: '2020' },
+    ],
     tags: ['coordinate-geometry', 'triangle', 'math-1st-paper'],
     source_metadata: {
       institution: 'University of Dhaka',
@@ -164,8 +171,10 @@ export const MOCK_QUESTIONS: QuestionItem[] = [
       en: 'The photochemical cleavage of water molecules into electrons, protons, and oxygen in thylakoids is known as photolysis.',
     },
     difficulty_level: 'medium',
-    source_type: 'school',
-    exam_references: ['Notre Dame College Test 2023'],
+    source_type: 'school_exam',
+    exam_references: [
+      { source_kind: 'college', institution_name: 'Notre Dame College', exam_name: 'Test', year: '2023' },
+    ],
     tags: ['botany', 'photosynthesis', 'photolysis'],
     source_metadata: {
       institution: 'Notre Dame College, Dhaka',
@@ -200,7 +209,7 @@ export const MOCK_QUESTIONS: QuestionItem[] = [
     },
     difficulty_level: 'easy',
     source_type: 'board_exam',
-    exam_references: ['Cumilla Board 2021'],
+    exam_references: [{ source_kind: 'board', board: 'Cumilla Board', year: '2021' }],
     tags: ['work-power-energy', 'conservative-force'],
     source_metadata: {
       institution: 'Cumilla Education Board',

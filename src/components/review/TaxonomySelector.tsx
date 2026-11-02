@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useLanguage } from '../../i18n/useLanguage';
-import { MOCK_TAXONOMY } from '../../data/mockTaxonomy';
-import { BookOpen, FolderTree, Tag } from 'lucide-react';
+import { useTaxonomyOptions } from '../../hooks/useTaxonomyOptions';
+import { BookOpen, FolderTree, Tag, RefreshCw } from 'lucide-react';
 
 interface TaxonomySelectorProps {
   subjectId?: string;
@@ -12,6 +12,19 @@ interface TaxonomySelectorProps {
   onChangeTopic: (topicId: string) => void;
 }
 
+const displayName = (
+  node: { name_bn?: string | null; name_en?: string | null },
+  language: 'en' | 'bn'
+): string => {
+  if (language === 'bn') return node.name_bn || node.name_en || '';
+  return node.name_en || node.name_bn || '';
+};
+
+/**
+ * Dependent Subject -> Chapter -> Topic selectors backed by the live
+ * curriculum. Chapters and topics load only after their parent is chosen, and a
+ * parent change clears the child selection.
+ */
 export const TaxonomySelector: React.FC<TaxonomySelectorProps> = ({
   subjectId,
   chapterId,
@@ -21,32 +34,24 @@ export const TaxonomySelector: React.FC<TaxonomySelectorProps> = ({
   onChangeTopic,
 }) => {
   const { t, language } = useLanguage();
+  const {
+    subjects,
+    chapters,
+    topics,
+    isLoadingSubjects,
+    isLoadingChapters,
+    isLoadingTopics,
+    error,
+  } = useTaxonomyOptions(subjectId, chapterId);
 
-  const selectedSubject = useMemo(() => {
-    return MOCK_TAXONOMY.find((s) => s.id === subjectId);
-  }, [subjectId]);
-
-  const availableChapters = useMemo(() => {
-    return selectedSubject ? selectedSubject.chapters : [];
-  }, [selectedSubject]);
-
-  const selectedChapter = useMemo(() => {
-    return availableChapters.find((c) => c.id === chapterId);
-  }, [availableChapters, chapterId]);
-
-  const availableTopics = useMemo(() => {
-    return selectedChapter ? selectedChapter.topics : [];
-  }, [selectedChapter]);
-
-  const handleSubjectSelect = (newSubId: string) => {
-    onChangeSubject(newSubId);
-    // Reset chapter and topic when subject changes
+  const handleSubjectSelect = (newSubjectId: string) => {
+    onChangeSubject(newSubjectId);
     onChangeChapter('');
     onChangeTopic('');
   };
 
-  const handleChapterSelect = (newChapId: string) => {
-    onChangeChapter(newChapId);
+  const handleChapterSelect = (newChapterId: string) => {
+    onChangeChapter(newChapterId);
     onChangeTopic('');
   };
 
@@ -57,10 +62,19 @@ export const TaxonomySelector: React.FC<TaxonomySelectorProps> = ({
           <FolderTree className="w-4 h-4 text-indigo-600" />
           <span>Curriculum Taxonomy</span>
         </div>
-        <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
-          {t.tax_mock_badge}
+        <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+          {t.tax_live_badge}
         </span>
       </div>
+
+      {error && (
+        <div className="flex items-center gap-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5">
+          <RefreshCw className="w-3 h-3" />
+          <span>
+            {t.tax_load_error} {error}
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {/* Subject Selector */}
@@ -72,14 +86,15 @@ export const TaxonomySelector: React.FC<TaxonomySelectorProps> = ({
           <select
             value={subjectId || ''}
             onChange={(e) => handleSubjectSelect(e.target.value)}
-            className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium transition-all"
+            disabled={isLoadingSubjects}
+            className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium transition-all disabled:bg-slate-100 disabled:text-slate-400"
           >
-            <option value="">{t.tax_select_subject}</option>
-            {MOCK_TAXONOMY.map((subj) => (
-              <option key={subj.id} value={subj.id}>
-                {language === 'bn'
-                  ? `${subj.name_bn} (${subj.code})`
-                  : `${subj.name_en} (${subj.code})`}
+            <option value="">
+              {isLoadingSubjects ? t.tax_loading : t.tax_select_subject}
+            </option>
+            {subjects.map((subject) => (
+              <option key={subject.id} value={subject.id}>
+                {displayName(subject, language)}
               </option>
             ))}
           </select>
@@ -94,15 +109,19 @@ export const TaxonomySelector: React.FC<TaxonomySelectorProps> = ({
           <select
             value={chapterId || ''}
             onChange={(e) => handleChapterSelect(e.target.value)}
-            disabled={!subjectId || availableChapters.length === 0}
+            disabled={!subjectId || isLoadingChapters || chapters.length === 0}
             className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium transition-all disabled:bg-slate-100 disabled:text-slate-400"
           >
-            <option value="">{t.tax_select_chapter}</option>
-            {availableChapters.map((chap) => (
-              <option key={chap.id} value={chap.id}>
-                {language === 'bn'
-                  ? `অধ্যায় ${chap.chapter_number}: ${chap.name_bn}`
-                  : `Ch ${chap.chapter_number}: ${chap.name_en}`}
+            <option value="">
+              {isLoadingChapters
+                ? t.tax_loading
+                : subjectId && chapters.length === 0
+                  ? t.tax_no_chapters
+                  : t.tax_select_chapter}
+            </option>
+            {chapters.map((chapter, index) => (
+              <option key={chapter.id} value={chapter.id}>
+                {`${index + 1}. ${displayName(chapter, language)}`}
               </option>
             ))}
           </select>
@@ -117,13 +136,19 @@ export const TaxonomySelector: React.FC<TaxonomySelectorProps> = ({
           <select
             value={topicId || ''}
             onChange={(e) => onChangeTopic(e.target.value)}
-            disabled={!chapterId || availableTopics.length === 0}
+            disabled={!chapterId || isLoadingTopics || topics.length === 0}
             className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium transition-all disabled:bg-slate-100 disabled:text-slate-400"
           >
-            <option value="">{t.tax_select_topic}</option>
-            {availableTopics.map((top) => (
-              <option key={top.id} value={top.id}>
-                {language === 'bn' ? top.name_bn : top.name_en}
+            <option value="">
+              {isLoadingTopics
+                ? t.tax_loading
+                : chapterId && topics.length === 0
+                  ? t.tax_no_topics
+                  : t.tax_select_topic}
+            </option>
+            {topics.map((topic) => (
+              <option key={topic.id} value={topic.id}>
+                {displayName(topic, language)}
               </option>
             ))}
           </select>

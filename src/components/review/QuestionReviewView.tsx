@@ -4,7 +4,7 @@ import type { QuestionItem } from '../../types/question';
 import { QuestionEditor } from './QuestionEditor';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { RawJsonEditorModal } from './RawJsonEditorModal';
-import { Badge, MockTagBadge } from '../common/Badge';
+import { Badge } from '../common/Badge';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -123,7 +123,6 @@ export const QuestionReviewView: React.FC<QuestionReviewViewProps> = ({
         <div>
           <div className="flex items-center gap-2 mb-1">
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{t.review_title}</h1>
-            <MockTagBadge />
           </div>
           <p className="text-xs sm:text-sm text-slate-500">{t.review_subtitle}</p>
         </div>

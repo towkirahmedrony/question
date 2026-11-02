@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useLanguage } from '../../i18n/useLanguage';
-import type { QuestionItem } from '../../types/question';
+import { useTaxonomyOptions } from '../../hooks/useTaxonomyOptions';
+import type { ImportBatchResult, QuestionItem } from '../../types/question';
+import { buildImportPayload } from '../../utils/validation';
 import { downloadJsonFile, copyJsonToClipboard, exportQuestionsToJson } from '../../utils/jsonExport';
-import { Badge, DifficultyBadge, MockTagBadge } from '../common/Badge';
+import { submitImport } from '../../services/importService';
+import { readErrorMessage } from '../../services/apiClient';
+import { Badge, DifficultyBadge } from '../common/Badge';
 import { Modal } from '../common/Modal';
 import {
   CheckCircle2,
@@ -18,36 +22,78 @@ import {
   Code,
   Check,
   HelpCircle,
+  History,
+  RefreshCw,
+  UploadCloud,
+  Ban,
 } from 'lucide-react';
 
 interface ImportSummaryViewProps {
   questions: QuestionItem[];
   onReturnToReview: () => void;
   onStartNewBatch: () => void;
-  onShowToast: (msg: string, type?: 'success' | 'warning' | 'error') => void;
+  onImportFinished: (remaining: QuestionItem[]) => void;
+  onShowToast: (msg: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
+  onOpenHistory: () => void;
 }
 
 export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
   questions,
   onReturnToReview,
   onStartNewBatch,
+  onImportFinished,
   onShowToast,
+  onOpenHistory,
 }) => {
   const { t } = useLanguage();
+  const { subjects } = useTaxonomyOptions();
+
   const [copied, setCopied] = useState(false);
   const [showJsonPreviewModal, setShowJsonPreviewModal] = useState(false);
-  const [showSimulateCommitModal, setShowSimulateCommitModal] = useState(false);
-  const [commitSuccess, setCommitSuccess] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [precheck, setPrecheck] = useState<ImportBatchResult | null>(null);
+  const [result, setResult] = useState<ImportBatchResult | null>(null);
+  const [lastBatch, setLastBatch] = useState<QuestionItem[]>([]);
+  const [retryable, setRetryable] = useState<QuestionItem[]>([]);
+  const [isChecking, setIsChecking] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
-  // Stats calculation
-  const total = questions.length;
-  const validCount = questions.filter((q) => q.validation_status === 'valid').length;
-  const warningCount = questions.filter((q) => q.validation_status === 'warning').length;
-  const invalidCount = questions.filter((q) => q.validation_status === 'invalid').length;
-  const pendingReviewCount = questions.filter((q) => !q.reviewed).length;
-  const missingAnswerCount = questions.filter(
-    (q) => q.requires_manual_answer_verification || !q.options.some((o) => o.isCorrect)
+  // Guards against a double click / duplicate submit while a request is open.
+  const submitLock = useRef(false);
+
+  const importable = useMemo(
+    () => questions.filter((question) => question.validation_errors.length === 0),
+    [questions]
+  );
+  const invalidCount = questions.length - importable.length;
+  const warningCount = questions.filter(
+    (question) => question.validation_status === 'warning'
   ).length;
+  const pendingReviewCount = questions.filter((question) => !question.reviewed).length;
+  const missingAnswerCount = questions.filter(
+    (question) => !question.options.some((option) => option.isCorrect)
+  ).length;
+
+  const subjectLabels = useMemo(() => {
+    const ids = Array.from(
+      new Set(importable.map((question) => question.subject_id).filter(Boolean))
+    ) as string[];
+
+    return ids
+      .map((id) => subjects.find((subject) => subject.id === id))
+      .map((subject) => subject?.name_en || subject?.name_bn || '')
+      .filter(Boolean);
+  }, [importable, subjects]);
+
+  const duplicateCount = precheck?.counts.duplicate ?? 0;
+  const duplicateRows = useMemo(
+    () => (precheck ? precheck.results.filter((row) => row.status === 'duplicate') : []),
+    [precheck]
+  );
+  const failedRows = useMemo(
+    () => (result ? result.results.filter((row) => row.status === 'failed') : []),
+    [result]
+  );
 
   const handleCopyJson = async () => {
     const success = await copyJsonToClipboard(questions);
@@ -59,16 +105,110 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
   };
 
   const handleDownloadJson = () => {
-    downloadJsonFile(questions, `porokh_import_batch_${new Date().toISOString().slice(0, 10)}.json`);
+    downloadJsonFile(
+      questions,
+      `porokh_import_batch_${new Date().toISOString().slice(0, 10)}.json`
+    );
     onShowToast('JSON file downloaded successfully', 'success');
   };
 
-  const handleSimulateCommit = () => {
-    if (missingAnswerCount > 0) {
-      onShowToast(`Warning: ${missingAnswerCount} question(s) still require a confirmed correct answer.`, 'warning');
+  const openImportModal = () => {
+    setShowImportModal(true);
+    setPrecheck(null);
+    setResult(null);
+    setRetryable([]);
+  };
+
+  /** Dry run: validation + duplicate detection without writing anything. */
+  const runPrecheck = async () => {
+    if (isChecking || isImporting) return;
+
+    if (importable.length === 0) {
+      onShowToast(t.imp_no_valid, 'warning');
+      return;
     }
-    setCommitSuccess(true);
-    onShowToast(t.sum_import_simulated_success, 'success');
+
+    setIsChecking(true);
+    setPrecheck(null);
+    setResult(null);
+
+    try {
+      const response = await submitImport({
+        questions: importable.map(buildImportPayload),
+        dryRun: true,
+        subjectLabels,
+      });
+      setPrecheck(response);
+    } catch (error) {
+      onShowToast(readErrorMessage(error, t.imp_check_failed), 'error');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const runImport = async (batch: QuestionItem[]) => {
+    if (submitLock.current || batch.length === 0) return;
+
+    submitLock.current = true;
+    setIsImporting(true);
+    setResult(null);
+    setLastBatch(batch);
+
+    try {
+      const response = await submitImport({
+        questions: batch.map(buildImportPayload),
+        dryRun: false,
+        subjectLabels,
+      });
+
+      setResult(response);
+      setPrecheck(null);
+
+      const resolvedIds = new Set(
+        batch
+          .filter((_, index) => {
+            const status = response.results.find((row) => row.index === index)?.status;
+            return status === 'imported' || status === 'duplicate';
+          })
+          .map((question) => question.id)
+      );
+
+      const failed = batch.filter((_, index) => {
+        const status = response.results.find((row) => row.index === index)?.status;
+        return status === 'failed';
+      });
+
+      setRetryable(failed);
+      onImportFinished(questions.filter((question) => !resolvedIds.has(question.id)));
+
+      const counts = response.counts;
+      if (counts.imported === 0 && counts.failed === 0 && counts.duplicate > 0) {
+        onShowToast(`${counts.duplicate} duplicate question(s) were skipped.`, 'warning');
+      } else if (counts.failed > 0) {
+        onShowToast(
+          `${counts.imported} imported, ${counts.duplicate} duplicate, ${counts.failed} failed.`,
+          'warning'
+        );
+      } else {
+        onShowToast(`${counts.imported} question(s) imported to the question bank.`, 'success');
+      }
+    } catch (error) {
+      onShowToast(readErrorMessage(error, t.imp_confirm_failed), 'error');
+    } finally {
+      submitLock.current = false;
+      setIsImporting(false);
+    }
+  };
+
+  const handleImportSingle = (question: QuestionItem) => {
+    if (question.validation_errors.length > 0) return;
+    openImportModal();
+    void runImport([question]);
+  };
+
+  const textOf = (question: QuestionItem | undefined, index: number): string => {
+    if (!question) return `#${index + 1}`;
+    return question.body.text_bn || question.body.text_en || `#${index + 1}`;
   };
 
   if (questions.length === 0) {
@@ -78,9 +218,7 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
           <Layers className="w-8 h-8" />
         </div>
         <h2 className="text-lg font-bold text-slate-900">{t.sum_title}</h2>
-        <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-          {t.sum_empty_batch}
-        </p>
+        <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">{t.sum_empty_batch}</p>
         <button
           onClick={onReturnToReview}
           className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm transition-colors"
@@ -93,13 +231,10 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
 
   return (
     <div className="space-y-6 pb-16">
-      {/* Title & Phase Notice */}
+      {/* Title & actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{t.sum_title}</h1>
-            <MockTagBadge />
-          </div>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mb-1">{t.sum_title}</h1>
           <p className="text-xs sm:text-sm text-slate-500">{t.sum_subtitle}</p>
         </div>
 
@@ -118,85 +253,84 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
             <Edit3 className="w-3.5 h-3.5" />
             <span>{t.sum_action_return_review}</span>
           </button>
+          <button
+            onClick={onOpenHistory}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
+          >
+            <History className="w-3.5 h-3.5 text-indigo-600" />
+            <span>{t.nav_history}</span>
+          </button>
         </div>
       </div>
 
-      {/* Status Cards (Valid, Warnings, Errors, Missing Answer, Pending) */}
+      {/* Status cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Valid */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-emerald-200 bg-emerald-50/20 shadow-xs flex flex-col justify-between">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-emerald-200 bg-emerald-50/20 shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-emerald-800">{t.sum_valid_count}</span>
             <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-emerald-950">
-              {validCount} <span className="text-xs font-medium text-emerald-600">/ {total}</span>
-            </div>
-            <p className="text-[11px] text-emerald-700 font-medium mt-1">
-              Passed schema & bilingual checks
-            </p>
+          <div className="text-2xl sm:text-3xl font-extrabold text-emerald-950">
+            {importable.length} <span className="text-xs font-medium text-emerald-600">/ {questions.length}</span>
           </div>
+          <p className="text-[11px] text-emerald-700 font-medium mt-1">
+            Reached the admin-compatible schema
+          </p>
         </div>
 
-        {/* Warnings */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-amber-200 bg-amber-50/20 shadow-xs flex flex-col justify-between">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-amber-200 bg-amber-50/20 shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-amber-800">{t.sum_warning_count}</span>
             <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
               <AlertTriangle className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-amber-950">{warningCount}</div>
-            <p className="text-[11px] text-amber-700 font-medium mt-1">Non-critical omissions</p>
-          </div>
+          <div className="text-2xl sm:text-3xl font-extrabold text-amber-950">{warningCount}</div>
+          <p className="text-[11px] text-amber-700 font-medium mt-1">Non-critical omissions</p>
         </div>
 
-        {/* Missing Answer Key */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-orange-200 bg-orange-50/20 shadow-xs flex flex-col justify-between">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-sky-200 bg-sky-50/20 shadow-xs">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-orange-800">{t.sum_needs_answer_count}</span>
-            <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center">
-              <HelpCircle className="w-4 h-4" />
+            <span className="text-xs font-semibold text-sky-800">{t.sum_duplicate_count}</span>
+            <div className="w-8 h-8 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center">
+              <Ban className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-orange-950">{missingAnswerCount}</div>
-            <p className="text-[11px] text-orange-700 font-medium mt-1">
-              {missingAnswerCount === 0 ? 'All answers confirmed' : 'Requires answer key select'}
-            </p>
-          </div>
+          <div className="text-2xl sm:text-3xl font-extrabold text-sky-950">{duplicateCount}</div>
+          <p className="text-[11px] text-sky-700 font-medium mt-1">
+            {precheck ? t.imp_duplicates_found : t.imp_check_title}
+          </p>
         </div>
 
-        {/* Errors / Invalid */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-rose-200 bg-rose-50/20 shadow-xs flex flex-col justify-between">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-rose-200 bg-rose-50/20 shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-rose-800">{t.sum_invalid_count}</span>
             <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center">
               <XCircle className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="text-2xl sm:text-3xl font-extrabold text-rose-950">{invalidCount}</div>
-            <p className="text-[11px] text-rose-700 font-medium mt-1">
-              {pendingReviewCount > 0 ? `${pendingReviewCount} unreviewed` : 'Requires user fix'}
-            </p>
-          </div>
+          <div className="text-2xl sm:text-3xl font-extrabold text-rose-950">{invalidCount}</div>
+          <p className="text-[11px] text-rose-700 font-medium mt-1">
+            {missingAnswerCount > 0
+              ? `${missingAnswerCount} missing an answer key`
+              : pendingReviewCount > 0
+                ? `${pendingReviewCount} unreviewed`
+                : 'Ready for the importer'}
+          </p>
         </div>
       </div>
 
-      {/* Main Action Bar for Export and Simulated Commit */}
+      {/* Action bar */}
       <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="space-y-1 text-center md:text-left">
           <div className="flex items-center justify-center md:justify-start gap-2">
             <Sparkles className="w-5 h-5 text-indigo-300" />
-            <h3 className="text-lg font-bold text-white">Export & Commit Batch</h3>
+            <h3 className="text-lg font-bold text-white">{t.imp_check_title}</h3>
           </div>
           <p className="text-xs text-indigo-200">
-            Export the standardized JSON schema or test the mock Porokh API pipeline.
+            {t.imp_check_desc} ({importable.length}/{questions.length})
           </p>
         </div>
 
@@ -219,28 +353,30 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
 
           <button
             onClick={handleDownloadJson}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white text-indigo-900 hover:bg-indigo-50 text-xs font-bold shadow-md shadow-black/10 active:scale-98 transition-all"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/15 backdrop-blur-md transition-all"
           >
-            <Download className="w-4 h-4 text-indigo-600" />
+            <Download className="w-4 h-4 text-indigo-200" />
             <span>{t.sum_action_export_json}</span>
           </button>
 
           <button
-            onClick={() => setShowSimulateCommitModal(true)}
+            onClick={openImportModal}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-bold shadow-md active:scale-98 transition-all"
           >
             <Send className="w-4 h-4" />
-            <span>{t.sum_action_porokh_import}</span>
+            <span>{t.imp_check_button}</span>
           </button>
         </div>
       </div>
 
-      {/* Question-by-Question Breakdown List */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden space-y-0">
+      {/* Per-question breakdown */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-base font-bold text-slate-900">{t.sum_validation_breakdown}</h3>
-            <p className="text-xs text-slate-500">Individual status, option count, and diagnostics for each item</p>
+            <p className="text-xs text-slate-500">
+              Individual status, answer key and diagnostics for each item
+            </p>
           </div>
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
             Total {questions.length} Questions
@@ -248,36 +384,35 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
         </div>
 
         <div className="divide-y divide-slate-100">
-          {questions.map((q, idx) => {
-            const hasErrors = q.validation_errors.length > 0;
-            const hasWarnings = q.validation_warnings.length > 0;
-            const isMissingAnswer = q.requires_manual_answer_verification || !q.options.some((o) => o.isCorrect);
+          {questions.map((question, index) => {
+            const hasErrors = question.validation_errors.length > 0;
+            const canImport = !hasErrors;
 
             return (
-              <div key={q.id} className="p-4 sm:p-5 hover:bg-slate-50/60 transition-colors space-y-2">
+              <div key={question.id} className="p-4 sm:p-5 hover:bg-slate-50/60 transition-colors space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="w-7 h-7 rounded-lg bg-slate-100 text-slate-800 text-xs font-bold flex items-center justify-center">
-                      #{idx + 1}
+                      #{index + 1}
                     </span>
                     <Badge
                       variant={
-                        q.validation_status === 'valid'
+                        question.validation_status === 'valid'
                           ? 'success'
-                          : q.validation_status === 'warning'
-                          ? 'warning'
-                          : 'danger'
+                          : question.validation_status === 'warning'
+                            ? 'warning'
+                            : 'danger'
                       }
                       size="sm"
                     >
-                      {q.validation_status === 'valid'
+                      {question.validation_status === 'valid'
                         ? 'Valid'
-                        : q.validation_status === 'warning'
-                        ? 'Warning'
-                        : 'Invalid'}
+                        : question.validation_status === 'warning'
+                          ? 'Warning'
+                          : 'Invalid'}
                     </Badge>
-                    <DifficultyBadge level={q.difficulty_level} />
-                    {isMissingAnswer && (
+                    <DifficultyBadge level={question.difficulty_level} />
+                    {!question.options.some((option) => option.isCorrect) && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300">
                         <HelpCircle className="w-3 h-3 text-amber-600" />
                         Needs Answer Key
@@ -287,50 +422,50 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
 
                   <div className="flex items-center gap-2 text-xs text-slate-500">
                     <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-[11px]">
-                      {q.options.length} Options
+                      {question.options.length} Options
                     </span>
-                    {q.reviewed ? (
-                      <span className="text-emerald-600 flex items-center gap-1 font-medium text-[11px]">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Reviewed
-                      </span>
-                    ) : (
-                      <span className="text-slate-400 text-[11px]">Unverified</span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleImportSingle(question)}
+                      disabled={!canImport || isImporting}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-700 text-[11px] font-semibold transition-colors"
+                    >
+                      <UploadCloud className="w-3 h-3" />
+                      <span>{t.imp_single}</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* Question Bengali snippet */}
                 <p className="text-xs sm:text-sm font-medium text-slate-800 line-clamp-2">
-                  {q.body.text_bn || <span className="text-rose-500 italic">(Missing Bengali question text)</span>}
+                  {question.body.text_bn || (
+                    <span className="text-rose-500 italic">(Missing Bengali question text)</span>
+                  )}
                 </p>
 
-                {/* Question English snippet */}
-                {q.body.text_en && (
+                {question.body.text_en && (
                   <p className="text-xs text-slate-500 line-clamp-1 italic">
-                    EN: {q.body.text_en}
+                    EN: {question.body.text_en}
                   </p>
                 )}
 
-                {/* Diagnostics list */}
-                {(hasErrors || hasWarnings) && (
+                {(hasErrors || question.validation_warnings.length > 0) && (
                   <div className="pt-1 flex flex-wrap gap-2 text-[11px]">
-                    {q.validation_errors.map((err, i) => (
+                    {question.validation_errors.map((error, errorIndex) => (
                       <span
-                        key={i}
+                        key={errorIndex}
                         className="inline-flex items-center gap-1 text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded"
                       >
                         <XCircle className="w-3 h-3" />
-                        {err}
+                        {error}
                       </span>
                     ))}
-                    {q.validation_warnings.map((warn, i) => (
+                    {question.validation_warnings.map((warning, warningIndex) => (
                       <span
-                        key={i}
+                        key={warningIndex}
                         className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded"
                       >
                         <AlertTriangle className="w-3 h-3" />
-                        {warn}
+                        {warning}
                       </span>
                     ))}
                   </div>
@@ -341,7 +476,7 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
         </div>
       </div>
 
-      {/* JSON Viewer Modal */}
+      {/* JSON viewer */}
       <Modal
         isOpen={showJsonPreviewModal}
         onClose={() => setShowJsonPreviewModal(false)}
@@ -350,25 +485,15 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
       >
         <div className="space-y-3">
           <div className="flex items-center justify-between text-xs text-slate-500">
-            <span>Standardized bilingual MCQ JSON schema ({questions.length} items):</span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleCopyJson}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-colors"
-              >
-                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copied ? 'Copied' : 'Copy JSON'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadJson}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download</span>
-              </button>
-            </div>
+            <span>Admin-panel-compatible JSON ({questions.length} items):</span>
+            <button
+              type="button"
+              onClick={handleCopyJson}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-colors"
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copied ? t.btn_copied : 'Copy JSON'}</span>
+            </button>
           </div>
 
           <pre className="p-4 rounded-xl bg-slate-900 text-slate-100 font-mono text-xs overflow-auto max-h-[60vh] border border-slate-800 leading-relaxed">
@@ -377,83 +502,198 @@ export const ImportSummaryView: React.FC<ImportSummaryViewProps> = ({
         </div>
       </Modal>
 
-      {/* Simulated Porokh Commit Modal */}
+      {/* Import workflow */}
       <Modal
-        isOpen={showSimulateCommitModal}
+        isOpen={showImportModal}
         onClose={() => {
-          setShowSimulateCommitModal(false);
-          setCommitSuccess(false);
+          if (isImporting) return;
+          setShowImportModal(false);
         }}
-        title="Simulated Porokh Import"
-        maxWidth="md"
+        title={result ? t.imp_result_title : t.imp_check_title}
+        maxWidth="2xl"
       >
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <MockTagBadge />
-            <span className="text-xs text-slate-500">Phase 2 Sandbox Mode</span>
-          </div>
-
-          {!commitSuccess ? (
+          {result ? (
             <>
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                You are about to simulate committing <span className="font-bold text-slate-900">{validCount} valid questions</span> to the Porokh Question Bank.
+                {t.imp_result_desc}
               </p>
 
-              {missingAnswerCount > 0 && (
-                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-1">
-                  <span className="font-bold block">⚠️ Unconfirmed Answers Detected:</span>
-                  <span>
-                    {missingAnswerCount} question(s) do not have confirmed correct options. They will be flagged for teacher review upon import.
-                  </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { label: t.imp_counts_imported, value: result.counts.imported, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+                  { label: t.imp_counts_duplicates, value: result.counts.duplicate, tone: 'text-sky-700 bg-sky-50 border-sky-200' },
+                  { label: t.imp_counts_failed, value: result.counts.failed, tone: 'text-rose-700 bg-rose-50 border-rose-200' },
+                  { label: t.imp_counts_invalid, value: result.counts.invalid, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
+                ].map((item) => (
+                  <div key={item.label} className={`p-3 rounded-xl border ${item.tone}`}>
+                    <p className="text-[11px] font-semibold">{item.label}</p>
+                    <p className="text-xl font-extrabold">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {failedRows.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-rose-800">{t.imp_counts_failed}</p>
+                  <div className="max-h-48 overflow-auto space-y-1.5">
+                    {failedRows.map((row) => (
+                      <div
+                        key={row.index}
+                        className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-800"
+                      >
+                        <p className="font-semibold line-clamp-1">
+                          #{row.index + 1} {textOf(lastBatch[row.index], row.index)}
+                        </p>
+                        <p className="text-rose-700">{row.errors.join(' ')}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs space-y-1">
-                <span className="font-bold block text-slate-800">Phase 2 Notice:</span>
-                <span>
-                  No direct database writes occur in this phase. This validates the schema and prepares questions for Phase 3 ingestion.
-                </span>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                {retryable.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void runImport(retryable)}
+                    disabled={isImporting}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300 text-white text-xs font-bold"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isImporting ? 'animate-spin' : ''}`} />
+                    <span>
+                      {t.imp_retry} ({retryable.length})
+                    </span>
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setShowSimulateCommitModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50"
+                  onClick={onOpenHistory}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50"
                 >
-                  {t.btn_cancel}
+                  <History className="w-3.5 h-3.5" />
+                  <span>{t.imp_history}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={handleSimulateCommit}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-500/20"
+                  onClick={() => setShowImportModal(false)}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold"
                 >
-                  Confirm Simulation
+                  {t.imp_done}
                 </button>
               </div>
             </>
           ) : (
-            <div className="text-center py-4 space-y-3">
-              <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
-                <Check className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900">Simulation Succeeded!</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                {validCount} questions were processed and verified against the Porokh bilingual schema.
+            <>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                {t.imp_check_desc}
               </p>
-              <div className="pt-3 flex justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowSimulateCommitModal(false);
-                    setCommitSuccess(false);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold"
-                >
-                  {t.btn_close}
-                </button>
-              </div>
-            </div>
+
+              {precheck ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50">
+                      <p className="text-[11px] font-semibold text-emerald-800">{t.imp_ready}</p>
+                      <p className="text-xl font-extrabold text-emerald-900">
+                        {precheck.counts.imported}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-sky-200 bg-sky-50">
+                      <p className="text-[11px] font-semibold text-sky-800">
+                        {t.imp_counts_duplicates}
+                      </p>
+                      <p className="text-xl font-extrabold text-sky-900">
+                        {precheck.counts.duplicate}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-rose-200 bg-rose-50">
+                      <p className="text-[11px] font-semibold text-rose-800">
+                        {t.imp_counts_invalid}
+                      </p>
+                      <p className="text-xl font-extrabold text-rose-900">
+                        {precheck.counts.invalid}
+                      </p>
+                    </div>
+                  </div>
+
+                  {duplicateRows.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-sky-900">{t.imp_duplicates_found}</p>
+                      <div className="max-h-48 overflow-auto space-y-1.5">
+                        {duplicateRows.map((row) => (
+                          <div
+                            key={row.index}
+                            className="p-2.5 rounded-lg bg-sky-50 border border-sky-200 text-[11px] text-sky-900"
+                          >
+                            <p className="font-semibold line-clamp-1">
+                              #{row.index + 1} {textOf(importable[row.index], row.index)}
+                            </p>
+                            <p className="text-sky-700">
+                              {row.existing_question_id
+                                ? `Existing question ${row.existing_question_id.slice(0, 8)}`
+                                : row.errors.join(' ')}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-slate-500">{t.imp_duplicates_desc}</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                      {t.imp_no_duplicates}
+                    </p>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowImportModal(false)}
+                      className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50"
+                    >
+                      {t.btn_cancel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void runImport(importable)}
+                      disabled={isImporting || precheck.counts.imported === 0}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-bold"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{isImporting ? t.imp_importing : `${t.imp_confirm_button} (${precheck.counts.imported})`}</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-1">
+                    <p className="font-bold text-slate-800">{t.imp_confirm_title}</p>
+                    <p>{t.imp_confirm_desc}</p>
+                    <p>
+                      {importable.length} {t.imp_ready} · {invalidCount} {t.imp_counts_invalid}
+                    </p>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowImportModal(false)}
+                      className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50"
+                    >
+                      {t.btn_cancel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void runPrecheck()}
+                      disabled={isChecking || importable.length === 0}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-bold"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
+                      <span>{isChecking ? t.imp_checking : t.imp_check_button}</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
       </Modal>

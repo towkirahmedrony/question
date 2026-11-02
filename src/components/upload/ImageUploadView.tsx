@@ -2,7 +2,6 @@ import React, { useState, useRef } from 'react';
 import { useLanguage } from '../../i18n/useLanguage';
 import type { UploadedImage } from '../../types/question';
 import { Modal } from '../common/Modal';
-import { MockTagBadge } from '../common/Badge';
 import {
   UploadCloud,
   Camera,
@@ -17,7 +16,6 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
-  Server,
 } from 'lucide-react';
 
 interface ImageUploadViewProps {
@@ -31,8 +29,6 @@ interface ImageUploadViewProps {
   isExtracting: boolean;
   extractionProgressText?: string;
   questionCount: number;
-  useBackendApi: boolean;
-  onToggleBackendApi: (enabled: boolean) => void;
 }
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
@@ -50,8 +46,6 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
   isExtracting,
   extractionProgressText,
   questionCount,
-  useBackendApi,
-  onToggleBackendApi,
 }) => {
   const { t } = useLanguage();
   const [dragOver, setDragOver] = useState(false);
@@ -129,40 +123,11 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
         <div>
           <div className="flex items-center gap-2 mb-1">
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{t.upload_title}</h1>
-            <MockTagBadge />
           </div>
           <p className="text-xs sm:text-sm text-slate-500">{t.upload_subtitle}</p>
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
-          {/* Backend / Simulation Toggle */}
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => onToggleBackendApi(true)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all ${
-                useBackendApi
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Server className="w-3.5 h-3.5" />
-              <span>{t.upload_mode_server}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onToggleBackendApi(false)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all ${
-                !useBackendApi
-                  ? 'bg-slate-800 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>{t.upload_mode_simulation}</span>
-            </button>
-          </div>
-
           {images.length > 0 && (
             <button
               onClick={onClearImages}
@@ -302,6 +267,13 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
                     <span>{img.extractedQuestionCount ? `${img.extractedQuestionCount} MCQs` : t.upload_status_extracted}</span>
                   </span>
                 );
+              } else if (img.status === 'empty') {
+                statusBadge = (
+                  <span className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs">
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    <span>0 MCQs</span>
+                  </span>
+                );
               } else if (img.status === 'error') {
                 statusBadge = (
                   <span className="bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs">
@@ -383,9 +355,7 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
             <div className="text-xs text-slate-500 flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
               <span>
-                {useBackendApi
-                  ? 'Gemini Vision securely processes images via backend API (API key never exposed).'
-                  : 'Operating in Sandbox Simulator mode with pre-validated bilingual models.'}
+                Gemini Vision securely processes images via the backend API (API key never exposed).
               </span>
             </div>
 

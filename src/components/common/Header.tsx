@@ -1,25 +1,51 @@
 import React from 'react';
 import { useLanguage } from '../../i18n/useLanguage';
-import { Sparkles, Globe, LayoutDashboard, UploadCloud, Edit3, CheckCircle2 } from 'lucide-react';
-import { MockTagBadge } from './Badge';
+import type { ImporterTab } from '../../types/navigation';
+import {
+  Sparkles,
+  Globe,
+  LayoutDashboard,
+  UploadCloud,
+  Edit3,
+  CheckCircle2,
+  History,
+  LogOut,
+} from 'lucide-react';
 
 interface HeaderProps {
-  currentTab: string;
-  onSelectTab: (tab: 'dashboard' | 'upload' | 'review' | 'summary') => void;
+  currentTab: ImporterTab;
+  onSelectTab: (tab: ImporterTab) => void;
   questionCount: number;
+  userEmail: string;
+  onSignOut: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentTab, onSelectTab, questionCount }) => {
+export const Header: React.FC<HeaderProps> = ({
+  currentTab,
+  onSelectTab,
+  questionCount,
+  userEmail,
+  onSignOut,
+}) => {
   const { language, toggleLanguage, t } = useLanguage();
+
+  const navButtonClass = (tab: ImporterTab): string =>
+    `flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
+      currentTab === tab
+        ? 'bg-white text-indigo-700 shadow-xs'
+        : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+    }`;
 
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200">
-      {/* Phase 1 Alert Topbar */}
+      {/* Phase notice */}
       <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white text-xs px-4 py-1.5 flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap max-w-[85%]">
-          <MockTagBadge />
-          <span className="font-medium text-indigo-100 hidden sm:inline">{t.phase_banner_title}:</span>
-          <span className="text-indigo-200 truncate">{t.phase_banner_desc}</span>
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-white/10 border border-white/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            {t.phase_banner_title}
+          </span>
+          <span className="text-indigo-200 truncate hidden sm:inline">{t.phase_banner_desc}</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -35,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onSelectTab, questio
 
       {/* Main Nav Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-16 gap-3">
           {/* Logo */}
           <div
             onClick={() => onSelectTab('dashboard')}
@@ -57,36 +83,15 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onSelectTab, questio
 
           {/* Desktop Nav Items */}
           <nav className="hidden md:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60">
-            <button
-              onClick={() => onSelectTab('dashboard')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
-                currentTab === 'dashboard'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
+            <button onClick={() => onSelectTab('dashboard')} className={navButtonClass('dashboard')}>
               <LayoutDashboard className="w-4 h-4" />
               <span>{t.nav_dashboard}</span>
             </button>
-            <button
-              onClick={() => onSelectTab('upload')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
-                currentTab === 'upload'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
+            <button onClick={() => onSelectTab('upload')} className={navButtonClass('upload')}>
               <UploadCloud className="w-4 h-4" />
               <span>{t.nav_upload}</span>
             </button>
-            <button
-              onClick={() => onSelectTab('review')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all relative ${
-                currentTab === 'review'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
+            <button onClick={() => onSelectTab('review')} className={navButtonClass('review')}>
               <Edit3 className="w-4 h-4" />
               <span>{t.nav_review}</span>
               {questionCount > 0 && (
@@ -95,27 +100,27 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onSelectTab, questio
                 </span>
               )}
             </button>
-            <button
-              onClick={() => onSelectTab('summary')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
-                currentTab === 'summary'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
+            <button onClick={() => onSelectTab('summary')} className={navButtonClass('summary')}>
               <CheckCircle2 className="w-4 h-4" />
               <span>{t.nav_summary}</span>
             </button>
+            <button onClick={() => onSelectTab('history')} className={navButtonClass('history')}>
+              <History className="w-4 h-4" />
+              <span>{t.nav_history}</span>
+            </button>
           </nav>
 
-          {/* Right Action: Language Switcher on Desktop */}
-          <div className="flex items-center gap-3">
+          {/* Account */}
+          <div className="flex items-center gap-2">
+            <span className="hidden lg:inline text-xs text-slate-500 max-w-[180px] truncate">
+              {userEmail}
+            </span>
             <button
-              onClick={toggleLanguage}
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors"
+              onClick={onSignOut}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors"
             >
-              <Globe className="w-4 h-4 text-indigo-600" />
-              <span>{language === 'en' ? 'বাংলা (BN)' : 'English (EN)'}</span>
+              <LogOut className="w-3.5 h-3.5 text-slate-500" />
+              <span>{t.auth_signout}</span>
             </button>
           </div>
         </div>

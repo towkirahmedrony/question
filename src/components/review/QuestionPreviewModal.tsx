@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { QuestionItem } from '../../types/question';
+import { formatReferenceLabel } from '../../utils/examReferences';
 import { Modal } from '../common/Modal';
 import { DifficultyBadge, SourceTypeBadge } from '../common/Badge';
 import { Check, HelpCircle, Eye } from 'lucide-react';
@@ -68,7 +69,7 @@ export const QuestionPreviewModal: React.FC<QuestionPreviewModalProps> = ({
               key={idx}
               className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md text-[11px] font-medium border border-indigo-100"
             >
-              {ref}
+              {formatReferenceLabel(ref) || ref.source_kind || 'Reference'}
             </span>
           ))}
         </div>

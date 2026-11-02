@@ -1,66 +1,184 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { LanguageProvider } from './i18n/LanguageContext';
+import { useLanguage } from './i18n/useLanguage';
 import { Header } from './components/common/Header';
 import { BottomNav } from './components/common/BottomNav';
 import { NotificationToast, type ToastMessage } from './components/common/NotificationToast';
+import { LoginView } from './components/auth/LoginView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { ImageUploadView } from './components/upload/ImageUploadView';
 import { QuestionReviewView } from './components/review/QuestionReviewView';
 import { ImportSummaryView } from './components/summary/ImportSummaryView';
-import type { QuestionItem, UploadedImage } from './types/question';
-import { MOCK_QUESTIONS } from './data/mockQuestions';
-import { validateQuestion } from './utils/validation';
+import { ImportHistoryView } from './components/history/ImportHistoryView';
+import type { ImporterTab } from './types/navigation';
+import type {
+  ImportHistoryEntry,
+  QuestionItem,
+  UploadedImage,
+} from './types/question';
+import { validateForImport } from './utils/validation';
 import { extractQuestionsViaBackendApi } from './services/aiExtractionService';
+import { fetchImportHistory } from './services/importService';
+import { readErrorMessage } from './services/apiClient';
+import {
+  type ImporterIdentity,
+  type ImporterSession,
+  canImportQuestions,
+  fetchImporterIdentity,
+  onUnauthorized,
+  restoreSession,
+  signIn,
+  signOut,
+} from './services/authService';
 
 export function AppContent() {
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'upload' | 'review' | 'summary'>('dashboard');
-  const [questions, setQuestions] = useState<QuestionItem[]>(() => {
-    // Initialize with re-validated mock questions
-    return MOCK_QUESTIONS.map((q) => {
-      const v = validateQuestion(q);
-      return {
-        ...q,
-        validation_status: v.status,
-        validation_errors: v.errors,
-        validation_warnings: v.warnings,
-      };
-    });
-  });
+  const { t } = useLanguage();
 
+  const [session, setSession] = useState<ImporterSession | null>(null);
+  const [identity, setIdentity] = useState<ImporterIdentity | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const [currentTab, setCurrentTab] = useState<ImporterTab>('dashboard');
+  const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionProgressText, setExtractionProgressText] = useState<string>('');
-  const [useBackendApi, setUseBackendApi] = useState(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const addToast = useCallback((message: string, type: 'success' | 'warning' | 'error' | 'info' = 'info') => {
-    const id = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    setToasts((prev) => [...prev, { id, type, message }]);
-  }, []);
+  const [history, setHistory] = useState<ImportHistoryEntry[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+
+  const addToast = useCallback(
+    (message: string, type: 'success' | 'warning' | 'error' | 'info' = 'info') => {
+      const id = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      setToasts((prev) => [...prev, { id, type, message }]);
+    },
+    []
+  );
 
   const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
 
-  // Update a single question and recalculate validation
-  const handleUpdateQuestion = (index: number, updated: QuestionItem) => {
-    const validation = validateQuestion(updated);
-    const validatedItem: QuestionItem = {
-      ...updated,
+  const refreshHistory = useCallback(async () => {
+    setIsLoadingHistory(true);
+
+    try {
+      setHistory(await fetchImportHistory());
+    } catch (error) {
+      addToast(readErrorMessage(error, t.hist_error), 'error');
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [addToast, t.hist_error]);
+
+  // Restore a stored Supabase session and verify authoring access first.
+  useEffect(() => {
+    let active = true;
+
+    restoreSession()
+      .then(async (stored) => {
+        if (!active || !stored) return;
+
+        const nextIdentity = await fetchImporterIdentity(stored.access_token);
+
+        if (!canImportQuestions(nextIdentity)) {
+          await signOut();
+          if (active) setAuthError(t.auth_access_denied);
+          return;
+        }
+
+        if (active) {
+          setSession(stored);
+          setIdentity(nextIdentity);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setAuthError(readErrorMessage(error, t.auth_backend_error));
+      })
+      .finally(() => {
+        if (active) setIsBootstrapping(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [t.auth_access_denied, t.auth_backend_error]);
+
+  // A 401 from the backend ends the session instead of leaving stale data.
+  useEffect(
+    () =>
+      onUnauthorized(() => {
+        setSession(null);
+        setIdentity(null);
+        setQuestions([]);
+        setUploadedImages([]);
+        setAuthError(t.auth_session_expired);
+      }),
+    [t.auth_session_expired]
+  );
+
+  useEffect(() => {
+    if (!session) return;
+    void refreshHistory();
+  }, [session, refreshHistory]);
+
+  const handleSignIn = useCallback(
+    async (email: string, password: string) => {
+      setAuthError(null);
+
+      const nextSession = await signIn(email, password);
+
+      try {
+        const nextIdentity = await fetchImporterIdentity(nextSession.access_token);
+
+        if (!canImportQuestions(nextIdentity)) {
+          throw new Error(t.auth_access_denied);
+        }
+
+        setSession(nextSession);
+        setIdentity(nextIdentity);
+      } catch (error) {
+        await signOut();
+        throw error;
+      }
+    },
+    [t.auth_access_denied]
+  );
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    setSession(null);
+    setIdentity(null);
+    setQuestions([]);
+    setUploadedImages([]);
+    setHistory([]);
+    setCurrentTab('dashboard');
+    setAuthError(null);
+  }, []);
+
+  const validateAndStore = (question: QuestionItem): QuestionItem => {
+    const validation = validateForImport(question);
+    return {
+      ...question,
       validation_status: validation.status,
       validation_errors: validation.errors,
       validation_warnings: validation.warnings,
     };
+  };
 
+  const handleUpdateQuestion = (index: number, updated: QuestionItem) => {
     setQuestions((prev) => {
       const copy = [...prev];
-      copy[index] = validatedItem;
+      copy[index] = validateAndStore(updated);
       return copy;
     });
   };
 
   const handleDeleteQuestion = (index: number) => {
-    setQuestions((prev) => prev.filter((_, i) => i !== index));
+    setQuestions((prev) => prev.filter((_, position) => position !== index));
     addToast('Question deleted from batch', 'warning');
   };
 
@@ -85,32 +203,17 @@ export function AppContent() {
       exam_references: [],
       tags: [],
       validation_status: 'invalid',
-      validation_errors: ['Question text in Bengali is required.'],
+      validation_errors: [],
       validation_warnings: [],
       reviewed: false,
     };
 
-    setQuestions((prev) => [newQuestion, ...prev]);
+    const validated = validateAndStore(newQuestion);
+    setQuestions((prev) => [validated, ...prev]);
     setCurrentTab('review');
     addToast('New blank question created', 'success');
   };
 
-  const handleLoadSampleBatch = () => {
-    const loaded = MOCK_QUESTIONS.map((q) => {
-      const v = validateQuestion(q);
-      return {
-        ...q,
-        validation_status: v.status,
-        validation_errors: v.errors,
-        validation_warnings: v.warnings,
-      };
-    });
-    setQuestions(loaded);
-    setCurrentTab('review');
-    addToast('Loaded sample extracted batch into reviewer', 'success');
-  };
-
-  // Execute extraction (Real Backend API or Simulation)
   const handleExtractQuestions = async () => {
     if (uploadedImages.length === 0) {
       addToast('Please upload at least one image first', 'warning');
@@ -118,192 +221,137 @@ export function AppContent() {
     }
 
     setIsExtracting(true);
+    setExtractionProgressText('Connecting to the backend Gemini service...');
 
-    if (!useBackendApi) {
-      // Local Simulation Mode
-      setExtractionProgressText('Running simulated multimodal OCR...');
-      addToast('Processing images with simulated AI OCR...', 'info');
+    setUploadedImages((prev) =>
+      prev.map((img) => ({ ...img, status: 'processing', errorMessage: undefined }))
+    );
 
-      // Mark images as extracting
-      setUploadedImages((prev) =>
-        prev.map((img) => ({ ...img, extractionStatus: 'extracting', errorMessage: undefined }))
-      );
-
-      setTimeout(() => {
-        const extractedMock = MOCK_QUESTIONS.map((q, idx) => {
-          const v = validateQuestion(q);
-          return {
-            ...q,
-            id: `q_extracted_${Date.now()}_${idx}`,
-            validation_status: v.status,
-            validation_errors: v.errors,
-            validation_warnings: v.warnings,
-            reviewed: false,
-          };
-        });
-
-        // Mark images as extracted
-        setUploadedImages((prev) =>
-          prev.map((img) => ({
-            ...img,
-            extractionStatus: 'extracted',
-            extractedCount: Math.ceil(extractedMock.length / Math.max(1, prev.length)),
-          }))
-        );
-
-        setQuestions(extractedMock);
-        setIsExtracting(false);
-        setExtractionProgressText('');
-        setCurrentTab('review');
-        addToast(`Simulated extraction complete! Extracted ${extractedMock.length} bilingual MCQs`, 'success');
-      }, 1200);
-      return;
-    }
-
-    // Live Backend Gemini API Extraction
     try {
-      setExtractionProgressText('Connecting to backend Gemini Vision service...');
-      addToast('Analyzing images with Gemini 2.5 Flash...', 'info');
-
-      // Update image statuses to extracting
-      setUploadedImages((prev) =>
-        prev.map((img) => ({ ...img, extractionStatus: 'extracting', errorMessage: undefined }))
-      );
-
       const result = await extractQuestionsViaBackendApi(
         uploadedImages,
         { generateMissingExplanations: true },
         (progress: string) => setExtractionProgressText(progress)
       );
 
-      if (!result.success || !result.questions) {
-        throw new Error(result.error || 'Failed to extract questions from images');
-      }
-
-      const extractedItems = result.questions;
-
-      // Validate all extracted items with Porokh schema rules
-      const validatedItems: QuestionItem[] = extractedItems.map((q: QuestionItem, idx: number) => {
-        const v = validateQuestion(q);
-        return {
-          ...q,
-          id: q.id || `q_gemini_${Date.now()}_${idx + 1}`,
-          validation_status: v.status,
-          validation_errors: v.errors,
-          validation_warnings: v.warnings,
+      const validatedItems: QuestionItem[] = result.questions.map((question, index) =>
+        validateAndStore({
+          ...question,
+          id: question.id || `q_gemini_${Date.now()}_${index + 1}`,
           reviewed: false,
-        };
-      });
+        })
+      );
 
-      // Update image status to extracted
+      // Per-image status comes from the backend, not an average across pages.
       setUploadedImages((prev) =>
-        prev.map((img) => ({
-          ...img,
-          extractionStatus: 'extracted',
-          extractedCount: Math.ceil(validatedItems.length / Math.max(1, prev.length)),
-        }))
+        prev.map((img) => {
+          const status = result.images.find((entry) => entry.image_id === img.id);
+          if (!status) return img;
+
+          return {
+            ...img,
+            status: status.status,
+            extractedQuestionCount: status.question_count,
+            errorMessage: undefined,
+          };
+        })
       );
 
       setQuestions(validatedItems);
-      setIsExtracting(false);
-      setExtractionProgressText('');
       setCurrentTab('review');
 
       const missingAnswerCount = validatedItems.filter(
-        (q) => q.requires_manual_answer_verification || !q.options.some((o) => o.isCorrect)
+        (question) =>
+          question.requires_manual_answer_verification ||
+          !question.options.some((option) => option.isCorrect)
       ).length;
 
-      if (missingAnswerCount > 0) {
+      if (validatedItems.length === 0) {
+        addToast('No questions were found. Try clearer photos or another page.', 'warning');
+      } else if (missingAnswerCount > 0) {
         addToast(
-          `Extracted ${validatedItems.length} questions. Note: ${missingAnswerCount} question(s) need manual answer key confirmation.`,
+          `Extracted ${validatedItems.length} questions. ${missingAnswerCount} need a manual answer key.`,
           'warning'
         );
       } else {
-        addToast(`Successfully extracted ${validatedItems.length} questions via Gemini Vision!`, 'success');
+        addToast(`Successfully extracted ${validatedItems.length} questions.`, 'success');
       }
-    } catch (err: any) {
-      console.error('Gemini extraction failed:', err);
-      setIsExtracting(false);
-      setExtractionProgressText('');
 
-      const errorMsg = err?.message || 'Gemini Vision extraction failed. Please check backend connection.';
-
-      // Mark images as error
-      setUploadedImages((prev) =>
-        prev.map((img) => ({
-          ...img,
-          extractionStatus: 'error',
-          errorMessage: errorMsg,
-        }))
+      if (result.rejected.length > 0) {
+        addToast(`${result.rejected.length} question(s) could not be read and were skipped.`, 'warning');
+      }
+    } catch (error) {
+      const message = readErrorMessage(
+        error,
+        'Gemini extraction failed. Please check the backend connection.'
       );
 
-      addToast(errorMsg, 'error');
+      setUploadedImages((prev) =>
+        prev.map((img) => ({ ...img, status: 'error', errorMessage: message }))
+      );
+
+      addToast(message, 'error');
+    } finally {
+      setIsExtracting(false);
+      setExtractionProgressText('');
     }
   };
 
-  // Retry extraction for a single failed image
   const handleRetrySingleImage = async (imageId: string) => {
     const targetImage = uploadedImages.find((img) => img.id === imageId);
     if (!targetImage) return;
 
     setUploadedImages((prev) =>
-      prev.map((img) => (img.id === imageId ? { ...img, extractionStatus: 'extracting', errorMessage: undefined } : img))
+      prev.map((img) =>
+        img.id === imageId ? { ...img, status: 'processing', errorMessage: undefined } : img
+      )
     );
 
     try {
-      if (!useBackendApi) {
-        setTimeout(() => {
-          setUploadedImages((prev) =>
-            prev.map((img) =>
-              img.id === imageId ? { ...img, extractionStatus: 'extracted', extractedCount: 2 } : img
-            )
-          );
-          addToast(`Retried ${targetImage.name} in simulation mode.`, 'success');
-        }, 800);
-        return;
-      }
-
       const result = await extractQuestionsViaBackendApi(
         [targetImage],
         { generateMissingExplanations: true },
         (progress: string) => setExtractionProgressText(progress)
       );
 
-      if (!result.success || !result.questions) {
-        throw new Error(result.error || 'Retry extraction failed');
-      }
-
-      const retryExtracted = result.questions;
-      const validatedNew: QuestionItem[] = retryExtracted.map((q: QuestionItem, idx: number) => {
-        const v = validateQuestion(q);
-        return {
-          ...q,
-          id: q.id || `q_gemini_retry_${Date.now()}_${idx + 1}`,
-          validation_status: v.status,
-          validation_errors: v.errors,
-          validation_warnings: v.warnings,
+      const validatedNew = result.questions.map((question, index) =>
+        validateAndStore({
+          ...question,
+          id: question.id || `q_gemini_retry_${Date.now()}_${index + 1}`,
           reviewed: false,
-        };
-      });
+        })
+      );
 
       setQuestions((prev) => [...prev, ...validatedNew]);
       setUploadedImages((prev) =>
         prev.map((img) =>
           img.id === imageId
-            ? { ...img, extractionStatus: 'extracted', extractedCount: validatedNew.length }
+            ? {
+                ...img,
+                status: validatedNew.length > 0 ? 'extracted' : 'empty',
+                extractedQuestionCount: validatedNew.length,
+                errorMessage: undefined,
+              }
             : img
         )
       );
 
-      addToast(`Retried ${targetImage.name}: extracted ${validatedNew.length} question(s)`, 'success');
-    } catch (err: any) {
-      const errorMsg = err?.message || 'Retry failed';
+      addToast(
+        validatedNew.length > 0
+          ? `Retried ${targetImage.name}: extracted ${validatedNew.length} question(s)`
+          : `Retried ${targetImage.name}: no questions found on this image`,
+        validatedNew.length > 0 ? 'success' : 'warning'
+      );
+    } catch (error) {
+      const message = readErrorMessage(error, 'Retry failed');
       setUploadedImages((prev) =>
         prev.map((img) =>
-          img.id === imageId ? { ...img, extractionStatus: 'error', errorMessage: errorMsg } : img
+          img.id === imageId ? { ...img, status: 'error', errorMessage: message } : img
         )
       );
-      addToast(errorMsg, 'error');
+      addToast(message, 'error');
+    } finally {
+      setExtractionProgressText('');
     }
   };
 
@@ -321,23 +369,43 @@ export function AppContent() {
     addToast('Cleared all uploaded images', 'info');
   };
 
+  const handleImportFinished = (remaining: QuestionItem[]) => {
+    setQuestions(remaining);
+    setHistoryRefreshKey((key) => key + 1);
+    void refreshHistory();
+  };
+
+  if (isBootstrapping) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <p className="text-sm text-slate-500">{t.auth_signing_in}</p>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginView onSignIn={handleSignIn} initialError={authError} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-indigo-500 selection:text-white">
-      {/* Top Header */}
       <Header
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
         questionCount={questions.length}
+        userEmail={identity?.role ? `${session.user.email} · ${identity.role}` : session.user.email}
+        onSignOut={() => void handleSignOut()}
       />
 
-      {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {currentTab === 'dashboard' && (
           <DashboardView
             onStartUpload={() => setCurrentTab('upload')}
-            onLoadSampleBatch={handleLoadSampleBatch}
             onOpenReview={() => setCurrentTab('review')}
+            onOpenHistory={() => setCurrentTab('history')}
             currentBatchQuestionCount={questions.length}
+            history={history}
+            isLoadingHistory={isLoadingHistory}
           />
         )}
 
@@ -353,8 +421,6 @@ export function AppContent() {
             isExtracting={isExtracting}
             extractionProgressText={extractionProgressText}
             questionCount={questions.length}
-            useBackendApi={useBackendApi}
-            onToggleBackendApi={setUseBackendApi}
           />
         )}
 
@@ -378,19 +444,23 @@ export function AppContent() {
               setUploadedImages([]);
               setCurrentTab('upload');
             }}
+            onImportFinished={handleImportFinished}
             onShowToast={addToast}
+            onOpenHistory={() => setCurrentTab('history')}
           />
+        )}
+
+        {currentTab === 'history' && (
+          <ImportHistoryView refreshKey={historyRefreshKey} onShowToast={addToast} />
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
       <BottomNav
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
         questionCount={questions.length}
       />
 
-      {/* Global Toast Notifications */}
       <NotificationToast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

@@ -1,10 +1,48 @@
 /**
- * Porokh AI Question Importer - Core TypeScript Schema
- * Matching the exact bilingual question format requirement.
+ * Porokh AI Question Importer - core schema.
+ *
+ * `QuestionData` matches what the admin panel and porokh-backend persist:
+ * bilingual body/options, structured `exam_references` objects (not free text),
+ * and the curriculum ids. `isCorrect` is the stored answer-key flag and is
+ * passed through unchanged.
  */
 
-export type DifficultyLevel = 'easy' | 'medium' | 'hard';
-export type SourceType = 'board_exam' | 'admission' | 'school' | 'other';
+export type DifficultyLevel = 'easy' | 'medium' | 'hard' | 'expert';
+
+/** Values accepted by the `questions_source_type_check` constraint. */
+export type SourceType =
+  | 'board_exam'
+  | 'admission'
+  | 'college_test'
+  | 'model_test'
+  | 'textbook'
+  | 'guidebook'
+  | 'school_exam'
+  | 'university_exam'
+  | 'unknown';
+
+export type ReferenceSourceKind =
+  | 'board'
+  | 'college'
+  | 'university'
+  | 'school'
+  | 'admission'
+  | 'book'
+  | 'unknown';
+
+/** One entry of `questions.exam_references` (JSONB). */
+export interface ExamReference {
+  source_kind?: ReferenceSourceKind;
+  board?: string;
+  institution_name?: string;
+  institution_id?: string;
+  unit_id?: string;
+  unit_name?: string;
+  exam_name?: string;
+  year?: string;
+  eiin?: string;
+  code?: string;
+}
 
 export interface QuestionOption {
   id: number;
@@ -30,8 +68,14 @@ export interface SourceMetadata {
   year?: number | string;
 }
 
+export type ValidationStatus = 'valid' | 'warning' | 'invalid';
+
 /**
- * Exact question schema matching Porokh import requirements
+ * Exact question schema the importer submits.
+ *
+ * `subject_id` and `chapter_id` are required at submission time; the export
+ * helper keeps them optional so a JSON download of an unfinished batch is still
+ * honest about what is missing.
  */
 export interface QuestionData {
   type: 'mcq';
@@ -40,12 +84,18 @@ export interface QuestionData {
   explanation: QuestionExplanation;
   difficulty_level: DifficultyLevel;
   source_type: SourceType;
-  exam_references: string[];
+  exam_references: ExamReference[];
   tags: string[];
   source_metadata?: SourceMetadata;
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+}
+
+/** Payload sent to `POST /content/questions/import`. */
+export interface ImportQuestionPayload extends QuestionData {
+  subject_id: string;
+  chapter_id: string;
 }
 
 /**
@@ -56,7 +106,7 @@ export interface QuestionItem extends QuestionData {
   source_image_id?: string; // Reference to uploaded image ID
   source_image_name?: string; // Reference to uploaded image filename
   source_image_index?: number; // Order index in the uploaded image sequence
-  validation_status: 'valid' | 'warning' | 'invalid';
+  validation_status: ValidationStatus;
   validation_errors: string[];
   validation_warnings: string[];
   requires_manual_answer_verification?: boolean; // Flagged when Gemini OCR did not detect an unambiguous printed answer
@@ -72,7 +122,7 @@ export interface UploadedImage {
   type: string;
   previewUrl: string;
   uploadedAt: Date;
-  status: 'pending' | 'processing' | 'extracted' | 'error';
+  status: 'pending' | 'processing' | 'extracted' | 'empty' | 'error';
   errorMessage?: string;
   extractedQuestionCount?: number;
   base64Data?: string;
@@ -99,4 +149,47 @@ export interface MockBatchHistory {
   validCount: number;
   status: 'imported' | 'partially_imported' | 'draft';
   sourceName: string;
+}
+
+/** Per-question outcome returned by the backend import endpoint. */
+export type ImportRowStatus = 'imported' | 'duplicate' | 'failed' | 'invalid';
+
+export interface ImportRowResult {
+  index: number;
+  status: ImportRowStatus;
+  question_id?: string;
+  existing_question_id?: string;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface ImportCounts {
+  total: number;
+  imported: number;
+  duplicate: number;
+  failed: number;
+  invalid: number;
+}
+
+export interface ImportBatchResult {
+  batch_id: string | null;
+  dry_run: boolean;
+  counts: ImportCounts;
+  results: ImportRowResult[];
+}
+
+export type ImportBatchStatus = 'completed' | 'partial' | 'failed' | 'duplicate';
+
+/** One import batch row in the history view. */
+export interface ImportHistoryEntry {
+  batch_id: string;
+  imported_at: string;
+  total: number;
+  imported: number;
+  duplicate: number;
+  failed: number;
+  invalid: number;
+  status: ImportBatchStatus;
+  source_label: string | null;
+  subject_labels: string[];
 }

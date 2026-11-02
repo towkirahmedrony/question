@@ -4,9 +4,18 @@ import type {
   QuestionItem,
   QuestionOption,
   DifficultyLevel,
+  ExamReference,
+  ReferenceSourceKind,
   SourceType,
 } from '../../types/question';
 import { TaxonomySelector } from './TaxonomySelector';
+import { useInstitutions } from '../../hooks/useInstitutions';
+import { institutionTypesForKind } from '../../services/sourceService';
+import {
+  REFERENCE_KIND_ORDER,
+  referenceKindForSourceType,
+  referenceName,
+} from '../../utils/examReferences';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -18,9 +27,6 @@ import {
   HelpCircle,
   Hash,
   Award,
-  Building,
-  GraduationCap,
-  Calendar,
   Languages,
   BookMarked,
   HelpCircle as QuestionIcon,
@@ -40,7 +46,7 @@ export const QuestionEditor: React.FC<QuestionEditorProps> = ({
   const { t } = useLanguage();
   const [bilingualViewMode, setBilingualViewMode] = useState<'both' | 'bn' | 'en'>('both');
   const [newTagInput, setNewTagInput] = useState('');
-  const [newExamRefInput, setNewExamRefInput] = useState('');
+  const { institutions, isLoading: isLoadingInstitutions, error: institutionsError } = useInstitutions();
 
   // Updates helper
   const updateBody = (fields: Partial<QuestionItem['body']>) => {
@@ -57,15 +63,95 @@ export const QuestionEditor: React.FC<QuestionEditorProps> = ({
     });
   };
 
-  const updateSourceMetadata = (fields: Partial<NonNullable<QuestionItem['source_metadata']>>) => {
+  // Structured exam reference handlers (admin-panel compatible JSONB)
+  const updateReference = (index: number, patch: Partial<ExamReference>) => {
     onChange({
       ...question,
-      source_metadata: {
-        ...(question.source_metadata || {}),
-        ...fields,
-      },
+      exam_references: question.exam_references.map((reference, position) =>
+        position === index ? { ...reference, ...patch } : reference
+      ),
     });
   };
+
+  const addReference = () => {
+    onChange({
+      ...question,
+      exam_references: [
+        ...question.exam_references,
+        { source_kind: referenceKindForSourceType(question.source_type) },
+      ],
+    });
+  };
+
+  const removeReference = (index: number) => {
+    onChange({
+      ...question,
+      exam_references: question.exam_references.filter((_, position) => position !== index),
+    });
+  };
+
+  const changeReferenceKind = (index: number, kind: ReferenceSourceKind) => {
+    const current = question.exam_references[index];
+    const name = current ? referenceName(current) : '';
+
+    const patch: Partial<ExamReference> = {
+      source_kind: kind,
+      board: undefined,
+      institution_name: undefined,
+      institution_id: undefined,
+      unit_id: undefined,
+      unit_name: undefined,
+    };
+
+    if (name) {
+      if (kind === 'board') patch.board = name;
+      else patch.institution_name = name;
+    }
+
+    updateReference(index, patch);
+  };
+
+  const applyInstitution = (index: number, institutionId: string) => {
+    const reference = question.exam_references[index];
+    if (!reference) return;
+
+    if (!institutionId) {
+      updateReference(index, { institution_id: undefined });
+      return;
+    }
+
+    const institution = institutions.find((item) => item.id === institutionId);
+    if (!institution) return;
+
+    const name = institution.name_en || institution.name_bn;
+    const isBoard = reference.source_kind === 'board';
+
+    updateReference(index, {
+      institution_id: institution.id,
+      ...(name ? (isBoard ? { board: name } : { institution_name: name }) : {}),
+      ...(institution.code ? { code: institution.code } : {}),
+      ...(institution.eiin || institution.code
+        ? { eiin: institution.eiin ?? institution.code ?? undefined }
+        : {}),
+    });
+  };
+
+  const availableInstitutions = (reference: ExamReference) => {
+    const allowedTypes = institutionTypesForKind(reference.source_kind ?? 'unknown');
+    if (allowedTypes.length === 0) return institutions;
+    return institutions.filter((institution) => allowedTypes.includes(institution.type));
+  };
+
+  const referenceKindLabel = (kind: ReferenceSourceKind): string =>
+    ({
+      board: t.ref_kind_board,
+      college: t.ref_kind_college,
+      university: t.ref_kind_university,
+      school: t.ref_kind_school,
+      admission: t.ref_kind_admission,
+      book: t.ref_kind_book,
+      unknown: t.ref_kind_unknown,
+    })[kind];
 
   // Option handlers
   const handleOptionChange = (optionId: number, field: 'text_bn' | 'text_en', value: string) => {
@@ -122,23 +208,6 @@ export const QuestionEditor: React.FC<QuestionEditorProps> = ({
     onChange({
       ...question,
       tags: question.tags.filter((t) => t !== tagToRemove),
-    });
-  };
-
-  // Exam reference handlers
-  const handleAddExamRef = () => {
-    if (!newExamRefInput.trim()) return;
-    const trimmed = newExamRefInput.trim();
-    if (!question.exam_references.includes(trimmed)) {
-      onChange({ ...question, exam_references: [...question.exam_references, trimmed] });
-    }
-    setNewExamRefInput('');
-  };
-
-  const handleRemoveExamRef = (refToRemove: string) => {
-    onChange({
-      ...question,
-      exam_references: question.exam_references.filter((r) => r !== refToRemove),
     });
   };
 
@@ -475,10 +544,10 @@ export const QuestionEditor: React.FC<QuestionEditorProps> = ({
                 onChange({ ...question, difficulty_level: e.target.value as DifficultyLevel })
               }
               className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-            >
-              <option value="easy">{t.diff_easy}</option>
+            >                <option value="easy">{t.diff_easy}</option>
               <option value="medium">{t.diff_medium}</option>
               <option value="hard">{t.diff_hard}</option>
+              <option value="expert">{t.diff_expert}</option>
             </select>
           </div>
 
@@ -495,106 +564,134 @@ export const QuestionEditor: React.FC<QuestionEditorProps> = ({
             >
               <option value="board_exam">{t.source_board_exam}</option>
               <option value="admission">{t.source_admission}</option>
-              <option value="school">{t.source_school}</option>
-              <option value="other">{t.source_other}</option>
+              <option value="college_test">{t.source_college_test}</option>
+              <option value="model_test">{t.source_model_test}</option>
+              <option value="textbook">{t.source_textbook}</option>
+              <option value="guidebook">{t.source_guidebook}</option>
+              <option value="school_exam">{t.source_school_exam}</option>
+              <option value="university_exam">{t.source_university_exam}</option>
+              <option value="unknown">{t.source_unknown}</option>
             </select>
           </div>
         </div>
 
-        {/* Source Metadata inputs (Institution, Exam Name, Year) */}
-        <div className="pt-2 border-t border-slate-100">
-          <span className="text-xs font-bold text-slate-700 block mb-2">
-            Source Origin & Year
-          </span>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1 flex items-center gap-1">
-                <Building className="w-3 h-3 text-slate-400" />
-                <span>{t.form_institution}</span>
-              </label>
-              <input
-                type="text"
-                value={question.source_metadata?.institution || ''}
-                onChange={(e) => updateSourceMetadata({ institution: e.target.value })}
-                placeholder={t.form_institution_placeholder}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1 flex items-center gap-1">
-                <GraduationCap className="w-3 h-3 text-slate-400" />
-                <span>{t.form_exam_name}</span>
-              </label>
-              <input
-                type="text"
-                value={question.source_metadata?.exam_name || ''}
-                onChange={(e) => updateSourceMetadata({ exam_name: e.target.value })}
-                placeholder={t.form_exam_name_placeholder}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1 flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-slate-400" />
-                <span>{t.form_exam_year}</span>
-              </label>
-              <input
-                type="text"
-                value={question.source_metadata?.year || ''}
-                onChange={(e) => updateSourceMetadata({ year: e.target.value })}
-                placeholder={t.form_exam_year_placeholder}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Exam References Tags */}
-        <div className="pt-2 border-t border-slate-100">
-          <label className="block text-xs font-semibold text-slate-700 mb-1">
-            {t.form_exam_refs}
-          </label>
-          <div className="flex flex-wrap items-center gap-1.5 mb-2">
-            {question.exam_references.map((ref, idx) => (
-              <span
-                key={idx}
-                className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-lg text-xs font-medium"
-              >
-                <span>{ref}</span>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveExamRef(ref)}
-                  className="hover:text-rose-600"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newExamRefInput}
-              onChange={(e) => setNewExamRefInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAddExamRef();
-                }
-              }}
-              placeholder={t.form_exam_refs_hint}
-              className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-            />
+        {/* Exam References: structured JSONB, the same shape the admin panel writes */}
+        <div className="pt-2 border-t border-slate-100 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+              <BookMarked className="w-3.5 h-3.5 text-slate-400" />
+              <span>{t.ref_title}</span>
+            </label>
             <button
               type="button"
-              onClick={handleAddExamRef}
-              className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+              onClick={addReference}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-semibold"
             >
-              Add
+              <Plus className="w-3 h-3" />
+              <span>{t.ref_add}</span>
             </button>
           </div>
+
+          <p className="text-[11px] text-slate-500">{t.ref_hint}</p>
+
+          {institutionsError && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+              {institutionsError}
+            </p>
+          )}
+
+          {question.exam_references.length === 0 ? (
+            <p className="text-[11px] text-slate-400 italic">{t.ref_empty}</p>
+          ) : (
+            <div className="space-y-2">
+              {question.exam_references.map((reference, index) => (
+                <div
+                  key={`ref-${index}`}
+                  className="p-3 rounded-xl border border-slate-200 bg-white space-y-2"
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+                        {t.ref_kind}
+                      </label>
+                      <select
+                        value={reference.source_kind ?? 'unknown'}
+                        onChange={(e) =>
+                          changeReferenceKind(index, e.target.value as ReferenceSourceKind)
+                        }
+                        className="w-full text-xs px-2.5 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      >
+                        {REFERENCE_KIND_ORDER.map((kind) => (
+                          <option key={kind} value={kind}>
+                            {referenceKindLabel(kind)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+                        {t.ref_institution}
+                      </label>
+                      <select
+                        value={reference.institution_id ?? ''}
+                        onChange={(e) => applyInstitution(index, e.target.value)}
+                        disabled={isLoadingInstitutions}
+                        className="w-full text-xs px-2.5 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                      >
+                        <option value="">
+                          {isLoadingInstitutions ? t.ref_loading : t.ref_institution_placeholder}
+                        </option>
+                        {availableInstitutions(reference).map((institution) => (
+                          <option key={institution.id} value={institution.id}>
+                            {institution.name_en || institution.name_bn}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+                        {t.ref_exam_name}
+                      </label>
+                      <input
+                        type="text"
+                        value={reference.exam_name ?? ''}
+                        onChange={(e) => updateReference(index, { exam_name: e.target.value })}
+                        placeholder={t.form_exam_name_placeholder}
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+                        {t.ref_year}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={reference.year ?? ''}
+                        onChange={(e) => updateReference(index, { year: e.target.value })}
+                        placeholder={t.form_exam_year_placeholder}
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => removeReference(index)}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 px-2 py-1 rounded-lg hover:bg-rose-50"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>{t.ref_remove}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Tags */}

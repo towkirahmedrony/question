@@ -46,10 +46,11 @@ export const DifficultyBadge: React.FC<{ level: DifficultyLevel; label?: string 
   level,
   label,
 }) => {
-  const map: Record<DifficultyLevel, { variant: 'success' | 'warning' | 'danger'; defaultLabel: string }> = {
+  const map: Record<DifficultyLevel, { variant: 'success' | 'warning' | 'danger' | 'purple'; defaultLabel: string }> = {
     easy: { variant: 'success', defaultLabel: 'Easy' },
     medium: { variant: 'warning', defaultLabel: 'Medium' },
     hard: { variant: 'danger', defaultLabel: 'Hard' },
+    expert: { variant: 'purple', defaultLabel: 'Expert' },
   };
 
   const item = map[level] || map.medium;
@@ -63,19 +64,15 @@ export const SourceTypeBadge: React.FC<{ type: SourceType; label?: string }> = (
   const map: Record<SourceType, { variant: 'purple' | 'info' | 'amber' | 'neutral'; defaultLabel: string }> = {
     board_exam: { variant: 'purple', defaultLabel: 'Board Exam' },
     admission: { variant: 'info', defaultLabel: 'Admission' },
-    school: { variant: 'amber', defaultLabel: 'School / College' },
-    other: { variant: 'neutral', defaultLabel: 'Other' },
+    college_test: { variant: 'amber', defaultLabel: 'College Test' },
+    model_test: { variant: 'amber', defaultLabel: 'Model Test' },
+    textbook: { variant: 'neutral', defaultLabel: 'Textbook' },
+    guidebook: { variant: 'neutral', defaultLabel: 'Guidebook' },
+    school_exam: { variant: 'amber', defaultLabel: 'School Exam' },
+    university_exam: { variant: 'info', defaultLabel: 'University Exam' },
+    unknown: { variant: 'neutral', defaultLabel: 'Other' },
   };
 
-  const item = map[type] || map.other;
+  const item = map[type] || map.unknown;
   return <Badge variant={item.variant}>{label || item.defaultLabel}</Badge>;
-};
-
-export const MockTagBadge: React.FC<{ className?: string }> = ({ className = '' }) => {
-  return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 ${className}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-      Phase 1 Mock
-    </span>
-  );
 };
