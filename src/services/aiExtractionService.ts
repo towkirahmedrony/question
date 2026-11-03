@@ -1,301 +1,246 @@
-import type {
-  DifficultyLevel,
-  ExamReference,
-  ExtractionConfidence,
-  QuestionItem,
-  SourceMetadata,
-  SourceType,
-  UploadedImage,
-} from '../types/question';
-import { apiRequest } from './apiClient';
-import {
-  DIFFICULTY_VALUES,
-  SOURCE_TYPE_VALUES,
-  validateQuestion,
-} from '../utils/validation';
-import { MAX_IMAGE_BYTES, normalizeImageMimeType, validateImageFile } from '../utils/imageValidation';
+import type { PreparedUnit } from '../types/import';
+import { ApiError, apiRequest } from './apiClient';
+import { buildExtractionBatches } from './extractionBatching';
+import { chunkText, mergePlainTextParts } from './sourceProcessing';
 
 /**
- * Backend AI extraction for the AI Question Importer.
+ * Backend AI extraction for the Question Importer.
  *
- * One question-paper image is sent inline to `POST /ai/extract-questions` with
- * the caller's Supabase bearer token. The provider key stays on the server;
- * this module only knows the sanitised question payload the backend returns.
+ * Every prepared unit (a text chunk or a page image) is sent to
+ * `POST /ai/extract-questions` with the caller's Supabase bearer token. The
+ * provider key stays on the server; this module only receives the Structured
+ * Plain Text document.
  */
 
-export interface ExtractionOptions {
-  sourceHint?: {
-    institution?: string;
-    exam_name?: string;
-    year?: string | number;
-    subject?: string;
-  };
-}
-
-export interface ExtractionImageStatus {
-  image_id: string;
-  file_name: string;
-  status: 'extracted' | 'empty';
-  question_count: number;
-}
-
-export interface ExtractionRejection {
-  index: number;
-  source_image_index: number;
-  reason: string;
-}
-
-export interface ExtractionResult {
-  success: true;
-  model: string;
-  questions: QuestionItem[];
-  images: ExtractionImageStatus[];
-  rejected: ExtractionRejection[];
-  warnings: string[];
-  batchSourceInfo: {
-    detected_institution?: string;
-    detected_exam_name?: string;
-    detected_year?: string;
-  };
-}
-
 const REQUEST_TIMEOUT_MS = 120_000;
+const RETRY_DELAY_MS = 1_200;
 
-interface ExtractedQuestionDto {
-  question_number?: string;
-  type?: string;
-  body?: { text_bn?: string; text_en?: string; image_url?: string | null };
-  options?: Array<{ id?: number; text_bn?: string; text_en?: string; isCorrect?: boolean }>;
-  explanation?: { bn?: string; en?: string };
-  difficulty_level?: string;
-  source_type?: string;
-  exam_references?: ExamReference[];
-  tags?: string[];
-  source_metadata?: SourceMetadata;
-  requires_manual_answer_verification?: boolean;
-  uncertain_ocr_flags?: string[];
-  confidence?: string;
-  source_image_index?: number;
+interface ExtractionSourceDto {
+  source_id: string;
+  file_name: string;
+  kind: 'text' | 'image';
+  text?: string;
+  mime_type?: string;
+  data?: string;
 }
 
 interface ExtractionResponseDto {
   model?: string;
-  images?: ExtractionImageStatus[];
-  questions?: ExtractedQuestionDto[];
-  rejected?: ExtractionRejection[];
-  batch_source_info?: {
-    institution?: string;
-    exam_name?: string;
-    year?: string;
-  };
+  plain_text?: string;
+  question_count?: number;
+  sources?: Array<{ source_id: string; file_name: string; status: 'extracted' | 'empty' }>;
   warnings?: string[];
 }
 
-interface EncodedImage {
-  image_id: string;
-  file_name: string;
-  mime_type: string;
-  data: string;
-  source: UploadedImage;
+export interface ExtractionFailure {
+  sourceId: string;
+  name: string;
+  error: string;
 }
 
-/**
- * Convert a File object to clean base64 string
- */
-export async function convertFileToBase64(file: File): Promise<{ base64Data: string; mimeType: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Strip data url prefix if present
-      const base64Data = result.includes(';base64,') ? result.split(';base64,')[1] : result;
-      resolve({
-        base64Data,
-        mimeType: normalizeImageMimeType(file.type || 'image/jpeg'),
+export interface ExtractionRunResult {
+  plainText: string;
+  warnings: string[];
+  failures: ExtractionFailure[];
+  /** True when the caller cancelled; everything collected so far is kept. */
+  cancelled: boolean;
+}
+
+export interface ExtractionRunOptions {
+  onProgress?: (progress: { current: number; total: number; label: string }) => void;
+  signal?: AbortSignal;
+}
+
+interface ExtractionJob extends PreparedUnit {
+  sourceName: string;
+}
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const toDto = (unit: PreparedUnit): ExtractionSourceDto =>
+  unit.kind === 'text'
+    ? {
+        source_id: unit.id,
+        file_name: unit.name,
+        kind: 'text',
+        text: unit.text ?? '',
+      }
+    : {
+        source_id: unit.id,
+        file_name: unit.name,
+        kind: 'image',
+        mime_type: unit.mime_type ?? 'image/jpeg',
+        data: unit.data ?? '',
+      };
+
+/** 429 and 5xx are worth one retry; auth and validation failures are not. */
+const isRetryable = (error: unknown): boolean =>
+  error instanceof ApiError && (error.status === 429 || error.status >= 500);
+
+const isRateLimited = (error: unknown): boolean =>
+  error instanceof ApiError && error.status === 429;
+
+const requestExtraction = async (
+  units: PreparedUnit[],
+  signal?: AbortSignal
+): Promise<ExtractionResponseDto> => {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await apiRequest<ExtractionResponseDto>('/ai/extract-questions', {
+        method: 'POST',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        signal,
+        body: { sources: units.map(toDto) },
       });
-    };
-    reader.onerror = () => reject(new Error(`Could not read "${file.name}".`));
-    reader.readAsDataURL(file);
-  });
-}
-
-/** Approximate decoded size of base64 content. */
-const base64Bytes = (base64: string): number => {
-  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
-};
-
-const encodeImage = async (image: UploadedImage): Promise<EncodedImage> => {
-  const validation = validateImageFile({ name: image.name, type: image.type, size: image.size });
-
-  if ('reason' in validation) {
-    if (validation.reason === 'size') {
-      throw new Error(`"${image.name}" is larger than 6MB. Please upload a smaller photo.`);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryable(error) || signal?.aborted) throw error;
+      await delay(RETRY_DELAY_MS);
     }
-    throw new Error(`"${image.name}" is not a supported image type. Use JPG, PNG or WEBP.`);
   }
 
-  let data = image.base64Data ?? '';
-  let mime = normalizeImageMimeType(image.type || 'image/jpeg');
-
-  if (!data && image.rawFile) {
-    const converted = await convertFileToBase64(image.rawFile);
-    data = converted.base64Data;
-    mime = converted.mimeType;
-  }
-
-  if (!data) {
-    const response = await fetch(image.previewUrl);
-    const blob = await response.blob();
-    const converted = await convertFileToBase64(new File([blob], image.name, { type: blob.type }));
-    data = converted.base64Data;
-    mime = converted.mimeType;
-  }
-
-  if (!data) throw new Error(`Unable to load image data for "${image.name}".`);
-
-  if (base64Bytes(data) > MAX_IMAGE_BYTES) {
-    throw new Error(`"${image.name}" is larger than 6MB. Please upload a smaller photo.`);
-  }
-
-  return {
-    image_id: image.id,
-    file_name: image.name,
-    mime_type: mime,
-    data,
-    source: image,
-  };
-};
-
-const asDifficulty = (value: unknown): DifficultyLevel =>
-  DIFFICULTY_VALUES.includes(value as DifficultyLevel) ? (value as DifficultyLevel) : 'medium';
-
-const asSourceType = (value: unknown): SourceType =>
-  SOURCE_TYPE_VALUES.includes(value as SourceType) ? (value as SourceType) : 'unknown';
-
-const asConfidence = (value: unknown): ExtractionConfidence | undefined =>
-  value === 'high' || value === 'medium' || value === 'low' ? value : undefined;
-
-const toQuestionItem = (
-  dto: ExtractedQuestionDto,
-  index: number,
-  image: EncodedImage,
-  batch: NonNullable<ExtractionResponseDto['batch_source_info']>
-): QuestionItem => {
-  const metadata = dto.source_metadata ?? {};
-  const sourceMetadata: SourceMetadata = {
-    institution: metadata.institution ?? batch.institution,
-    exam_name: metadata.exam_name ?? batch.exam_name,
-    year: metadata.year ?? batch.year,
-  };
-
-  const item: QuestionItem = {
-    id: `q_extracted_${Date.now()}_${index}`,
-    question_number: dto.question_number || undefined,
-    type: 'mcq',
-    body: {
-      text_bn: dto.body?.text_bn ?? '',
-      text_en: dto.body?.text_en ?? '',
-      image_url: dto.body?.image_url ?? null,
-    },
-    options: (dto.options ?? []).map((option, position) => ({
-      id: position + 1,
-      text_bn: option.text_bn ?? '',
-      text_en: option.text_en ?? '',
-      isCorrect: option.isCorrect === true,
-    })),
-    explanation: {
-      bn: dto.explanation?.bn ?? '',
-      en: dto.explanation?.en ?? '',
-    },
-    difficulty_level: asDifficulty(dto.difficulty_level),
-    source_type: asSourceType(dto.source_type),
-    exam_references: Array.isArray(dto.exam_references) ? dto.exam_references : [],
-    tags: Array.isArray(dto.tags) ? dto.tags : [],
-    ...(sourceMetadata.institution || sourceMetadata.exam_name || sourceMetadata.year
-      ? { source_metadata: sourceMetadata }
-      : {}),
-    requires_manual_answer_verification: dto.requires_manual_answer_verification === true,
-    uncertain_ocr_flags: Array.isArray(dto.uncertain_ocr_flags) ? dto.uncertain_ocr_flags : [],
-    confidence: asConfidence(dto.confidence),
-    source_image_id: image.image_id,
-    source_image_name: image.file_name,
-    source_image_index: 0,
-    validation_status: 'valid',
-    validation_errors: [],
-    validation_warnings: [],
-    reviewed: false,
-  };
-
-  const validation = validateQuestion(item);
-  item.validation_status = validation.status;
-  item.validation_errors = validation.errors;
-  item.validation_warnings = validation.warnings;
-
-  return item;
+  throw lastError;
 };
 
 /**
- * Calls the backend extraction endpoint for one image.
- *
- * The backend enforces authentication, the `questions.manage` permission, the
- * rate limit and its own timeout; this function adds a client deadline and maps
- * the sanitised response into the review interface's `QuestionItem`.
+ * Builds one job per unit. Text is chunked so a large TXT/PDF never exceeds the
+ * model budget; images keep one page per unit.
  */
-export async function extractQuestionsViaBackendApi(
-  image: UploadedImage,
-  options: ExtractionOptions = {},
-  onProgress?: (progress: string) => void
-): Promise<ExtractionResult> {
-  onProgress?.('Preparing the question-paper image...');
-  const encoded = await encodeImage(image);
+const buildJobs = (units: PreparedUnit[]): ExtractionJob[] => {
+  const jobs: ExtractionJob[] = [];
 
-  onProgress?.('Sending the image to the AI for bilingual extraction...');
+  for (const unit of units) {
+    if (unit.kind === 'image') {
+      jobs.push({ ...unit, sourceName: unit.name });
+      continue;
+    }
 
-  const response = await apiRequest<ExtractionResponseDto>('/ai/extract-questions', {
-    method: 'POST',
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    body: {
-      images: [
-        {
-          image_id: encoded.image_id,
-          file_name: encoded.file_name,
-          mime_type: encoded.mime_type,
-          data: encoded.data,
-        },
-      ],
-      source_hint: options.sourceHint
-        ? {
-            institution: options.sourceHint.institution,
-            exam_name: options.sourceHint.exam_name,
-            year:
-              options.sourceHint.year === undefined
-                ? undefined
-                : String(options.sourceHint.year),
-            subject: options.sourceHint.subject,
+    const chunks = chunkText(unit.text ?? '');
+    chunks.forEach((chunk, index) => {
+      jobs.push({
+        ...unit,
+        id: chunks.length > 1 ? `${unit.id}_part_${index + 1}` : unit.id,
+        name:
+          chunks.length > 1
+            ? `${unit.name} (part ${index + 1}/${chunks.length})`
+            : unit.name,
+        text: chunk,
+        sourceName: unit.name,
+      });
+    });
+  }
+
+  return jobs;
+};
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : 'This source could not be extracted.';
+
+/**
+ * Runs every prepared unit through the backend in order.
+ *
+ * Units are batched (up to the server limits) so a long PDF does not spend one
+ * rate-limited request per page. If a batch fails, its units are retried one by
+ * one so a single bad page does not discard the rest of the file.
+ *
+ * A failed page or file does not discard the rest: its error is returned so the
+ * UI can offer a retry, and the questions already extracted are preserved.
+ * Aborting stops at the next request and returns what was collected so far.
+ */
+export const runExtraction = async (
+  units: PreparedUnit[],
+  options: ExtractionRunOptions = {}
+): Promise<ExtractionRunResult> => {
+  const batches = buildExtractionBatches(buildJobs(units));
+  const parts: string[] = [];
+  const warnings: string[] = [];
+  const failures: ExtractionFailure[] = [];
+  let cancelled = false;
+
+  const collect = (response: ExtractionResponseDto) => {
+    const plainText = typeof response.plain_text === 'string' ? response.plain_text : '';
+
+    if (plainText.trim()) parts.push(plainText);
+    for (const warning of response.warnings ?? []) {
+      if (warning && !warnings.includes(warning)) warnings.push(warning);
+    }
+  };
+
+  for (let index = 0; index < batches.length; index += 1) {
+    const batch = batches[index];
+
+    if (options.signal?.aborted) {
+      cancelled = true;
+      break;
+    }
+
+    options.onProgress?.({
+      current: index + 1,
+      total: batches.length,
+      label: batch.label,
+    });
+
+    try {
+      collect(await requestExtraction(batch.units, options.signal));
+    } catch (error) {
+      if (options.signal?.aborted) {
+        cancelled = true;
+        break;
+      }
+
+      // Isolate a bad unit instead of failing the whole batch with it. A rate
+      // limit is not unit-specific, so retrying each page would only waste quota.
+      if (batch.units.length > 1 && !isRateLimited(error)) {
+        for (const unit of batch.units) {
+          if (options.signal?.aborted) {
+            cancelled = true;
+            break;
           }
-        : undefined,
-    },
-  });
 
-  const batch = response.batch_source_info ?? {};
-  const questions = (response.questions ?? []).map((dto, index) =>
-    toQuestionItem(dto, index, encoded, batch)
-  );
+          options.onProgress?.({
+            current: index + 1,
+            total: batches.length,
+            label: unit.name,
+          });
 
-  onProgress?.(`Validated ${questions.length} question(s). Opening review...`);
+          try {
+            collect(await requestExtraction([unit], options.signal));
+          } catch (unitError) {
+            if (options.signal?.aborted) {
+              cancelled = true;
+              break;
+            }
+
+            failures.push({
+              sourceId: unit.sourceId,
+              name: unit.name,
+              error: errorMessage(unitError),
+            });
+          }
+        }
+
+        continue;
+      }
+
+      for (const unit of batch.units) {
+        failures.push({
+          sourceId: unit.sourceId,
+          name: unit.name,
+          error: errorMessage(error),
+        });
+      }
+    }
+
+    if (cancelled) break;
+  }
 
   return {
-    success: true,
-    model: response.model ?? 'ai-vision-model',
-    questions,
-    images: response.images ?? [],
-    rejected: response.rejected ?? [],
-    warnings: response.warnings ?? [],
-    batchSourceInfo: {
-      detected_institution: batch.institution,
-      detected_exam_name: batch.exam_name,
-      detected_year: batch.year,
-    },
+    plainText: mergePlainTextParts(parts),
+    warnings,
+    failures,
+    cancelled,
   };
-}
+};

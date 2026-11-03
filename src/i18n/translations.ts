@@ -5,14 +5,14 @@ export const translations = {
     // App & Header
     app_title: 'Porokh AI Importer',
     app_tagline: 'Smart Exam Question Extractor & Importer',
-    phase_banner_title: 'Phase 4: Single Image AI Extraction',
-    phase_banner_desc: 'One question-paper image per extraction, with numbered questions, confidence indicators and mandatory review.',
+    phase_banner_title: 'Multi-format AI Question Import',
+    phase_banner_desc: 'Text, camera, gallery, PDF, CSV and TXT become one reviewable Structured Plain Text document.',
     language: 'Language',
     
     // Navigation
     nav_dashboard: 'Dashboard',
-    nav_upload: 'Upload Images',
-    nav_review: 'Review Questions',
+    nav_upload: 'Import Questions',
+    nav_review: 'Review Text',
     nav_summary: 'Import Summary',
     nav_history: 'Import History',
 
@@ -22,7 +22,7 @@ export const translations = {
     dash_accuracy_rate: 'Extraction Accuracy',
     dash_pending_review: 'Pending Review',
     dash_import_cta: 'Import New Questions',
-    dash_import_cta_sub: 'Upload exam paper photos & extract bilingual MCQs using AI',
+    dash_import_cta_sub: 'Paste text or add photos, PDF, CSV and TXT to extract bilingual MCQs using AI',
     dash_recent_activity: 'Recent Import Activity',
     dash_batch_id: 'Batch ID',
     dash_subject: 'Subject',
@@ -229,6 +229,73 @@ export const translations = {
     ref_kind_book: 'Book / Guide',
     ref_kind_unknown: 'Other',
 
+    // Multi-format import
+    import_title: 'Import Questions',
+    import_subtitle:
+      'Paste text or add photos, PDF, CSV and TXT files. The AI turns everything into one reviewable Structured Plain Text document.',
+    import_paste_label: 'Paste question content',
+    import_paste_placeholder:
+      'Paste admission questions, a question paper transcription, or any supported content here...',
+    import_add_files: 'Add Files',
+    import_add_photos: 'Add Photos',
+    import_take_photo: 'Take Photo',
+    import_drop_hint: 'Images (JPG, PNG, WEBP), PDF, CSV and TXT. Mix formats in one batch.',
+    import_selected_sources: 'Selected Sources',
+    import_clear_all: 'Clear All',
+    import_remove: 'Remove',
+    import_process: 'Extract with AI',
+    import_processing: 'Extracting...',
+    import_cancel: 'Cancel',
+    import_cancelled: 'Extraction cancelled. Results collected so far were kept.',
+    import_empty: 'Paste text or add at least one file to start.',
+    import_progress: 'Processing {current} of {total}',
+    import_extracted_success: 'Extracted {count} question block(s). Review the plain text before importing.',
+    import_no_questions: 'No eligible questions were found in these sources.',
+    import_extraction_failed: 'AI extraction failed. Check the connection and retry.',
+    import_partial_failure: '{count} source(s) failed and were skipped. The rest were kept.',
+    import_error_file: 'This file could not be processed.',
+    import_status_pending: 'Ready',
+    import_status_processing: 'Processing',
+    import_status_done: 'Done',
+    import_status_error: 'Failed',
+    import_format_guide: 'Format Guide',
+    import_guide_title: 'Structured Plain Text format',
+    import_guide_intro:
+      'Everything the AI extracts uses one format. Metadata lines start with @, question fields use fixed keys, and consecutive questions are separated by ---.',
+    import_guide_inputs:
+      'Supported inputs: pasted text, camera, gallery images, text and scanned PDFs, UTF-8 CSV and TXT files, and any mix of them in one session.',
+    import_guide_csv:
+      'CSV is read in your browser. A header row is required; known columns such as q_text_bn, q_text_en, opt_1_bn ... opt_4_en, correct_opt (1-based), exp_bn, exp_en, difficulty, tags and source_type are turned into question blocks.',
+    import_guide_fields:
+      'Required per question: Q_BN or Q_EN, options A-D (up to F) and ANS. Recommended: bilingual options, EXP_BN, EXP_EN, DIFF and 3-8 lowercase TAGS.',
+    import_guide_metadata:
+      'Metadata: @source (admission, model_test, guidebook or unknown), @institution (official English name), @exam, @unit, @year and @tags. Repeat the metadata before a question when the institution, year or unit changes.',
+    import_guide_answers:
+      'ANS is one letter that must match an available option. EXP_BN and EXP_EN explain the answer concisely. DIFF is easy, medium, hard or expert. TAGS is 3-8 lowercase English topic tags. Use A: instead of A_BN/A_EN when both languages are identical.',
+    import_guide_separator:
+      'Put a line containing only --- between consecutive questions. Do not number questions, add commentary or wrap the output in Markdown or code fences.',
+    import_guide_errors:
+      'Common errors: missing ANS, option gaps, an answer that does not match an option, unknown @headers, and two questions without a --- separator.',
+
+    // Plain-text review
+    text_review_title: 'Review Structured Plain Text',
+    text_review_subtitle:
+      'This is exactly what the backend will parse. Fix OCR mistakes, answers and explanations before importing.',
+    text_review_placeholder: 'Extracted questions will appear here in the Structured Plain Text format...',
+    text_validate: 'Validate Text',
+    text_validating: 'Validating...',
+    text_valid: '{valid} of {total} question(s) are ready to import.',
+    text_parse_errors: 'Blocks that need fixing',
+    text_parse_warnings: 'Notes',
+    text_reference_links: 'Institution links',
+    text_copy: 'Copy Text',
+    text_copied: 'Plain text copied.',
+    text_download: 'Download .txt',
+    text_clear: 'Clear Text',
+    text_continue: 'Continue to Import',
+    text_questions: '{count} question block(s)',
+    text_need_validation: 'Validate the text before importing.',
+
     // Import workflow
     imp_check_title: 'Pre-import check',
     imp_check_desc: 'Validate the batch and detect duplicates before anything is written to the question bank.',
@@ -295,14 +362,14 @@ export const translations = {
     // App & Header
     app_title: 'পরখ এআই ইমপোর্টার',
     app_tagline: 'প্রশ্নপত্র এক্সট্রাক্টর ও স্মার্ট ইমপোর্টার',
-    phase_banner_title: 'ফেজ ৪: একক ছবি থেকে এআই এক্সট্রাকশন',
-    phase_banner_desc: 'প্রতি অনুরোধে একটি প্রশ্নপত্রের ছবি, প্রশ্ন নম্বর, নির্ভরযোগ্যতার সূচক ও বাধ্যতামূলক রিভিউ।',
+    phase_banner_title: 'বহু-ফরম্যাট এআই প্রশ্ন ইমপোর্ট',
+    phase_banner_desc: 'টেক্সট, ক্যামেরা, গ্যালারি, PDF, CSV ও TXT সবই একটি রিভিউযোগ্য Structured Plain Text ডকুমেন্টে।',
     language: 'ভাষা',
     
     // Navigation
     nav_dashboard: 'ড্যাশবোর্ড',
-    nav_upload: 'ছবি আপলোড',
-    nav_review: 'প্রশ্ন রিভিউ',
+    nav_upload: 'প্রশ্ন ইমপোর্ট',
+    nav_review: 'টেক্সট রিভিউ',
     nav_summary: 'ইমপোর্ট সারাংশ',
     nav_history: 'ইমপোর্ট হিস্টরি',
 
@@ -312,7 +379,7 @@ export const translations = {
     dash_accuracy_rate: 'এক্সট্রাকশন নির্ভুলতা',
     dash_pending_review: 'রিভিউ বাকি',
     dash_import_cta: 'নতুন প্রশ্ন ইমপোর্ট করুন',
-    dash_import_cta_sub: 'প্রশ্নপত্রের ছবি আপলোড করে এআই দিয়ে দ্বিভাষিক MCQ এক্সট্রাক্ট করুন',
+    dash_import_cta_sub: 'টেক্সট পেস্ট করুন বা ছবি, PDF, CSV ও TXT যোগ করে এআই দিয়ে দ্বিভাষিক MCQ এক্সট্রাক্ট করুন',
     dash_recent_activity: 'সাম্প্রতিক ইমপোর্ট কার্যক্রম',
     dash_batch_id: 'ব্যাচ আইডি',
     dash_subject: 'বিষয়',
@@ -519,6 +586,73 @@ export const translations = {
     ref_kind_book: 'বই / গাইড',
     ref_kind_unknown: 'অন্যান্য',
 
+    // Multi-format import
+    import_title: 'প্রশ্ন ইমপোর্ট করুন',
+    import_subtitle:
+      'টেক্সট পেস্ট করুন অথবা ছবি, PDF, CSV ও TXT ফাইল যোগ করুন। এআই সবকিছুকে একটি Structured Plain Text ডকুমেন্টে রূপান্তর করবে।',
+    import_paste_label: 'প্রশ্নের কনটেন্ট পেস্ট করুন',
+    import_paste_placeholder:
+      'ভর্তি পরীক্ষার প্রশ্ন, প্রশ্নপত্রের টেক্সট বা সমর্থিত যেকোনো কনটেন্ট এখানে পেস্ট করুন...',
+    import_add_files: 'ফাইল যোগ করুন',
+    import_add_photos: 'ছবি যোগ করুন',
+    import_take_photo: 'ছবি তুলুন',
+    import_drop_hint: 'ছবি (JPG, PNG, WEBP), PDF, CSV ও TXT। একই ব্যাচে বিভিন্ন ফরম্যাট মেশানো যাবে।',
+    import_selected_sources: 'নির্বাচিত সোর্স',
+    import_clear_all: 'সব মুছুন',
+    import_remove: 'মুছুন',
+    import_process: 'এআই দিয়ে এক্সট্রাক্ট করুন',
+    import_processing: 'এক্সট্রাক্ট হচ্ছে...',
+    import_cancel: 'বাতিল',
+    import_cancelled: 'এক্সট্রাকশন বাতিল হয়েছে। এ পর্যন্ত পাওয়া ফলাফল রাখা হয়েছে।',
+    import_empty: 'শুরু করতে টেক্সট পেস্ট করুন বা অন্তত একটি ফাইল যোগ করুন।',
+    import_progress: '{total}টির মধ্যে {current}টি প্রসেস হচ্ছে',
+    import_extracted_success: '{count}টি প্রশ্ন ব্লক পাওয়া গেছে। ইমপোর্টের আগে প্লেইন টেক্সট রিভিউ করুন।',
+    import_no_questions: 'এই সোর্সগুলোতে উপযুক্ত কোনো প্রশ্ন পাওয়া যায়নি।',
+    import_extraction_failed: 'এআই এক্সট্রাকশন ব্যর্থ হয়েছে। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।',
+    import_partial_failure: '{count}টি সোর্স ব্যর্থ হয়েছে এবং বাদ দেওয়া হয়েছে। বাকিগুলো রাখা হয়েছে।',
+    import_error_file: 'এই ফাইলটি প্রসেস করা যায়নি।',
+    import_status_pending: 'প্রস্তুত',
+    import_status_processing: 'প্রসেসিং',
+    import_status_done: 'সম্পন্ন',
+    import_status_error: 'ব্যর্থ',
+    import_format_guide: 'ফরম্যাট গাইড',
+    import_guide_title: 'Structured Plain Text ফরম্যাট',
+    import_guide_intro:
+      'এআই যা এক্সট্রাক্ট করে সবই একই ফরম্যাটে থাকে। মেটাডেটা লাইন @ দিয়ে শুরু হয়, প্রশ্নের ফিল্ড নির্দিষ্ট কী ব্যবহার করে, আর প্রশ্নগুলো --- দিয়ে আলাদা করা হয়।',
+    import_guide_inputs:
+      'সমর্থিত ইনপুট: পেস্ট করা টেক্সট, ক্যামেরা, গ্যালারির ছবি, টেক্সট ও স্ক্যান করা PDF, UTF-8 CSV এবং TXT ফাইল, এবং একই সেশনে এদের যেকোনো মিশ্রণ।',
+    import_guide_csv:
+      'CSV আপনার ব্রাউজারেই পড়া হয়। হেডার সারি আবশ্যক; q_text_bn, q_text_en, opt_1_bn ... opt_4_en, correct_opt (১-ভিত্তিক), exp_bn, exp_en, difficulty, tags ও source_type কলামগুলো প্রশ্ন ব্লকে রূপান্তরিত হয়।',
+    import_guide_fields:
+      'প্রতি প্রশ্নে আবশ্যক: Q_BN বা Q_EN, A-D (সর্বোচ্চ F) অপশন এবং ANS। প্রস্তাবিত: দ্বিভাষিক অপশন, EXP_BN, EXP_EN, DIFF এবং ৩-৮টি ছোট হাতের TAGS।',
+    import_guide_metadata:
+      'মেটাডেটা: @source (admission, model_test, guidebook বা unknown), @institution (প্রতিষ্ঠানের সরকারি ইংরেজি নাম), @exam, @unit, @year ও @tags। প্রতিষ্ঠান, বছর বা ইউনিট বদলালে পরের প্রশ্নের আগে মেটাডেটা আবার লিখুন।',
+    import_guide_answers:
+      'ANS একটি অক্ষর, যা অবশ্যই কোনো অপশনের সাথে মিলতে হবে। EXP_BN ও EXP_EN সংক্ষেপে উত্তর ব্যাখ্যা করে। DIFF হলো easy, medium, hard বা expert। TAGS হলো ৩-৮টি ছোট হাতের ইংরেজি ট্যাগ। দুই ভাষার অপশন একই হলে A_BN/A_EN এর বদলে A: ব্যবহার করুন।',
+    import_guide_separator:
+      'পরপর প্রশ্নের মাঝে শুধু --- থাকা একটি লাইন দিন। প্রশ্নে নম্বর দেবেন না, ভূমিকা বা মন্তব্য যোগ করবেন না, এবং আউটপুট Markdown বা code fence-এ মুড়বেন না।',
+    import_guide_errors:
+      'সাধারণ ভুল: ANS না থাকা, অপশনে ফাঁক, উত্তরের অক্ষর কোনো অপশনের সাথে না মেলা, অজানা @হেডার, এবং --- ছাড়া দুটি প্রশ্ন একসাথে থাকা।',
+
+    // Plain-text review
+    text_review_title: 'Structured Plain Text রিভিউ',
+    text_review_subtitle:
+      'ব্যাকএন্ড ঠিক এটাই পার্স করবে। ইমপোর্টের আগে OCR ভুল, উত্তর ও ব্যাখ্যা ঠিক করুন।',
+    text_review_placeholder: 'এক্সট্রাক্ট করা প্রশ্নগুলো এখানে Structured Plain Text ফরম্যাটে দেখা যাবে...',
+    text_validate: 'টেক্সট যাচাই করুন',
+    text_validating: 'যাচাই হচ্ছে...',
+    text_valid: '{total}টির মধ্যে {valid}টি প্রশ্ন ইমপোর্টের জন্য প্রস্তুত।',
+    text_parse_errors: 'যেসব ব্লক ঠিক করতে হবে',
+    text_parse_warnings: 'নোট',
+    text_reference_links: 'প্রতিষ্ঠান লিংক',
+    text_copy: 'টেক্সট কপি করুন',
+    text_copied: 'প্লেইন টেক্সট কপি হয়েছে।',
+    text_download: '.txt ডাউনলোড',
+    text_clear: 'টেক্সট মুছুন',
+    text_continue: 'ইমপোর্টে যান',
+    text_questions: '{count}টি প্রশ্ন ব্লক',
+    text_need_validation: 'ইমপোর্টের আগে টেক্সট যাচাই করুন।',
+
     // Import workflow
     imp_check_title: 'ইমপোর্টের আগে যাচাই',
     imp_check_desc: 'প্রশ্নব্যাংকে কিছু লেখার আগেই ব্যাচ যাচাই করুন এবং ডুপ্লিকেট শনাক্ত করুন।',
@@ -546,6 +680,7 @@ export const translations = {
     imp_done: 'সম্পন্ন',
     imp_history: 'ইমপোর্ট হিস্টরি দেখুন',
     imp_review_gate: 'আরও {count}টি প্রশ্নের রিভিউ বাকি। ইমপোর্টের আগে প্রতিটি প্রশ্ন অনুমোদন করুন।',
+
 
     // Import history
     hist_title: 'ইমপোর্ট হিস্টরি',

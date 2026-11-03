@@ -1,7 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { useLanguage } from '../../i18n/useLanguage';
 import type { QuestionItem } from '../../types/question';
-import type { ExtractionRejection } from '../../services/aiExtractionService';
+
+interface ExtractionRejection {
+  index: number;
+  source_image_index: number;
+  reason: string;
+}
 import { QuestionEditor } from './QuestionEditor';
 import { QuestionPreviewModal } from './QuestionPreviewModal';
 import { RawJsonEditorModal } from './RawJsonEditorModal';
