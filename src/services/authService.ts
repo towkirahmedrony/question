@@ -133,21 +133,62 @@ const requestToken = async (
 ): Promise<ImporterSession> => {
   assertConfigured();
 
-  const response = await fetch(
-    `${SUPABASE_URL}/auth/v1/token?grant_type=${encodeURIComponent(grantType)}`,
-    {
+  const url = `${SUPABASE_URL}/auth/v1/token?grant_type=${encodeURIComponent(grantType)}`;
+
+  console.info('[AUTH DEBUG] Request started', {
+    step: 'supabase_token',
+    grantType,
+    url,
+    timestamp: new Date().toISOString(),
+  });
+
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-    }
-  );
+    });
+  } catch (error) {
+    console.error('[AUTH DEBUG] Supabase network request failed', {
+      step: 'supabase_token',
+      url,
+      errorName: error instanceof Error ? error.name : 'Unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    });
+    throw new Error(
+      `Supabase network request failed: ${error instanceof Error ? error.message : String(error)}. Check browser Network/Console.`
+    );
+  }
 
-  if (!response.ok) throw new Error(await readAuthError(response));
+  console.info('[AUTH DEBUG] Supabase response received', {
+    step: 'supabase_token',
+    status: response.status,
+    ok: response.ok,
+  });
 
-  return toSession((await response.json()) as SupabaseTokenResponse);
+  if (!response.ok) {
+    const message = await readAuthError(response);
+    console.error('[AUTH DEBUG] Supabase authentication rejected', {
+      status: response.status,
+      message,
+    });
+    throw new Error(message);
+  }
+
+  const payload = (await response.json()) as SupabaseTokenResponse;
+  console.info('[AUTH DEBUG] Supabase login successful', {
+    hasAccessToken: Boolean(payload.access_token),
+    hasRefreshToken: Boolean(payload.refresh_token),
+    hasUser: Boolean(payload.user?.id),
+  });
+
+  return toSession(payload);
 };
 
 /** Password sign-in against Supabase Auth; stores the session for this tab. */
@@ -214,8 +255,37 @@ const readPermissions = (value: unknown): string[] => {
  * resolves these from `user_roles`, never from the token's user metadata.
  */
 export const fetchImporterIdentity = async (token: string): Promise<ImporterIdentity> => {
-  const response = await fetch(`${API_BASE_URL}/auth/permissions`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const url = `${API_BASE_URL}/auth/permissions`;
+
+  console.info('[AUTH DEBUG] Backend permissions request started', {
+    step: 'backend_permissions',
+    url,
+    timestamp: new Date().toISOString(),
+  });
+
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (error) {
+    console.error('[AUTH DEBUG] Backend network request failed', {
+      step: 'backend_permissions',
+      url,
+      errorName: error instanceof Error ? error.name : 'Unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    });
+    throw new Error(
+      `Backend network request failed (${url}): ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  console.info('[AUTH DEBUG] Backend permissions response received', {
+    step: 'backend_permissions',
+    status: response.status,
+    ok: response.ok,
   });
 
   if (response.status === 401) {
