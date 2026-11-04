@@ -91,5 +91,5 @@ export const httpFetch = async (
   };
 
   const request = CapacitorHttp.request(options).then(toResponse);
-  return raceAbort(request, init.signal);
+  return raceAbort(request, init.signal ?? undefined);
 };
