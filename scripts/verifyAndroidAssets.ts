@@ -64,7 +64,9 @@ if (apkFlag !== -1) {
   for (const [name, expectedBytes] of distBundles) {
     const apkEntry = `assets/public/${name}`;
     if (!entries.includes(apkEntry)) throw new Error(`The APK is missing ${apkEntry}.`);
-    const actualBytes = execFileSync('unzip', ['-p', apkPath, apkEntry]);
+    const actualBytes = execFileSync('unzip', ['-p', apkPath, apkEntry], {
+      maxBuffer: 16 * 1024 * 1024,
+    });
     if (sha256(actualBytes) !== sha256(expectedBytes)) {
       throw new Error(`The APK contains stale or altered web assets at ${apkEntry}.`);
     }
