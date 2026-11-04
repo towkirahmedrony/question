@@ -182,10 +182,14 @@ development only; production uses HTTPS.
 build, `npx cap sync android`, `./gradlew assembleDebug` and uploads
 `porokh-question-importer-debug` (the `app-debug.apk`) for 14 days.
 
-The workflow reads `VITE_API_URL`, `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY` from repository **variables**, not secrets. Those are
-publishable values; without them the build still succeeds but the APK is not
-configured for a backend. No signing key or secret is committed or uploaded.
+The workflow reads `VITE_API_URL` from repository variable `VITE_API_URL` and
+reads `VITE_SUPABASE_URL` plus `VITE_SUPABASE_ANON_KEY` from GitHub Actions
+secrets with those exact names. The latter must contain the Supabase project URL
+and its public anon/publishable key; never use a service-role or secret key.
+Vite fails the production build if either value is absent or invalid. After
+`cap sync`, CI verifies the configured values and exact generated JavaScript
+bundles in Android assets, then verifies the APK before uploading it. No signing
+key or privileged Supabase key is committed or uploaded.
 
 ## Native plugins
 
