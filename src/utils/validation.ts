@@ -157,6 +157,12 @@ const validateReferences = (
   });
 };
 
+const referenceHasInstitution = (reference: ExamReference): boolean =>
+  Boolean(reference.institution_id?.trim() || reference.institution_name?.trim());
+
+const referenceHasUnit = (reference: ExamReference): boolean =>
+  Boolean(reference.unit_id?.trim() || reference.unit_name?.trim());
+
 /**
  * Stricter check used before anything is submitted to the backend.
  *
@@ -192,6 +198,15 @@ export function validateForImport(q: Partial<QuestionItem>): ValidationResult {
   }
 
   validateReferences(q.exam_references, errors, warnings);
+
+  if (
+    q.source_type === 'admission' &&
+    !(q.exam_references ?? []).some(
+      (reference) => referenceHasInstitution(reference) && referenceHasUnit(reference)
+    )
+  ) {
+    errors.push('Admission questions need an institution and an admission unit in the same reference.');
+  }
 
   const uniqueErrors = unique(errors);
   const uniqueWarnings = unique(warnings);

@@ -47,6 +47,20 @@ test('csvToReadableText maps the admin CSV columns into a readable question bloc
   assert.ok(!text.includes('Option C'));
 });
 
+test('csvToReadableText preserves admission institution, unit and session metadata', () => {
+  const csv = [
+    'q_text_bn,q_text_en,opt_1_bn,opt_1_en,opt_2_bn,opt_2_en,correct_opt,source_type,institution_name,unit_name,session',
+    'প্রশ্ন?,Question?,হ্যাঁ,Yes,না,No,1,admission,University of Dhaka,A,2025-26',
+  ].join('\n');
+
+  const text = csvToReadableText(csv);
+
+  assert.ok(text.includes('Source type: admission'));
+  assert.ok(text.includes('Institution: University of Dhaka'));
+  assert.ok(text.includes('Unit: A'));
+  assert.ok(text.includes('Session: 2025-26'));
+});
+
 test('csvToReadableText keeps rows intact when the headers are not recognised', () => {
   const text = csvToReadableText('serial,note\n1,hello\n2,"world, again"');
 

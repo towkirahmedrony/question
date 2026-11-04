@@ -6,7 +6,7 @@ const EXAMPLE = `@source: admission
 @institution: University of Dhaka
 @exam: A Unit
 @unit: ক
-@year: 2024-25
+@session: 2024-25
 @tags: biology, cell biology
 
 Q_BN: কোষ ঝিল্লির মোট শুষ্ক ওজনের কত ভাগ লিপিড?
@@ -40,6 +40,17 @@ D_EN: None of the above
 ANS: C
 DIFF: medium
 TAGS: biology, plant cell, plasmodesmata`;
+
+const OPTIONAL_SOURCE_EXAMPLE = `@source: model_test
+
+Q_BN: পানির রাসায়নিক সংকেত কী?
+Q_EN: What is the chemical formula of water?
+A_BN: CO₂
+A_EN: CO₂
+B_BN: H₂O
+B_EN: H₂O
+ANS: B
+DIFF: easy`;
 
 /** Collapsible reference for the canonical format and supported inputs. */
 export const FormatGuide: React.FC = () => {
@@ -100,9 +111,16 @@ export const FormatGuide: React.FC = () => {
           </pre>
         </div>
 
+        <div>
+          <p className="font-semibold text-slate-800 mb-2">Model Test / Guidebook / Unknown (institution and unit optional)</p>
+          <pre className="overflow-auto rounded-xl bg-slate-900 text-slate-100 p-3.5 font-mono text-[11px] leading-5">
+            {OPTIONAL_SOURCE_EXAMPLE}
+          </pre>
+        </div>
+
         <p className="text-[11px] text-slate-500 leading-relaxed">
           Metadata lines: <code>@source</code>, <code>@institution</code>, <code>@exam</code>,{' '}
-          <code>@unit</code>, <code>@year</code>, <code>@tags</code>. Question fields:{' '}
+          <code>@unit</code>, <code>@session</code> (legacy <code>@year</code> accepted), <code>@tags</code>. Question fields:{' '}
           <code>Q_BN</code>, <code>Q_EN</code>, <code>A_BN…F_EN</code>, <code>ANS</code>,{' '}
           <code>EXP_BN</code>, <code>EXP_EN</code>, <code>DIFF</code>, <code>TAGS</code>.
         </p>

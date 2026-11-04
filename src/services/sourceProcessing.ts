@@ -254,6 +254,7 @@ export const csvToReadableText = (input: string): string => {
   const institution = findColumn(headers, ['institution', 'institution_name']);
   const exam = findColumn(headers, ['exam', 'exam_name']);
   const unit = findColumn(headers, ['unit', 'unit_name']);
+  const session = findColumn(headers, ['session', 'admission_session']);
   const year = findColumn(headers, ['year']);
   const references = findColumn(headers, ['exam_references']);
 
@@ -313,6 +314,7 @@ export const csvToReadableText = (input: string): string => {
     if (cell(row, institution)) lines.push(`Institution: ${cell(row, institution)}`);
     if (cell(row, exam)) lines.push(`Exam: ${cell(row, exam)}`);
     if (cell(row, unit)) lines.push(`Unit: ${cell(row, unit)}`);
+    if (cell(row, session)) lines.push(`Session: ${cell(row, session)}`);
     if (cell(row, year)) lines.push(`Year: ${cell(row, year)}`);
     if (cell(row, references)) {
       const formatted = formatExamReferences(cell(row, references));

@@ -265,17 +265,17 @@ export const translations = {
     import_guide_inputs:
       'Supported inputs: pasted text, camera, gallery images, text and scanned PDFs, UTF-8 CSV and TXT files, and any mix of them in one session.',
     import_guide_csv:
-      'CSV is read in your browser. A header row is required; known columns such as q_text_bn, q_text_en, opt_1_bn ... opt_4_en, correct_opt (1-based), exp_bn, exp_en, difficulty, tags and source_type are turned into question blocks.',
+      'CSV is read in your browser. A header row is required; known columns such as q_text_bn, q_text_en, opt_1_bn ... opt_4_en, correct_opt (1-based), exp_bn, exp_en, difficulty, tags, source_type, institution_name, unit_name and session (or year) are turned into question blocks.',
     import_guide_fields:
       'Required per question: Q_BN or Q_EN, options A-D (up to F) and ANS. Recommended: bilingual options, EXP_BN, EXP_EN, DIFF and 3-8 lowercase TAGS.',
     import_guide_metadata:
-      'Metadata: @source (admission, model_test, guidebook or unknown), @institution (official English name), @exam, @unit, @year and @tags. Repeat the metadata before a question when the institution, year or unit changes.',
+      'Metadata: @source (admission, model_test, guidebook or unknown), @institution, @exam, @unit, @session (or legacy @year) and @tags. Admission requires both @institution and @unit. Model Test, Guidebook and Unknown may omit institution and unit. If a unit is supplied, include its institution too. Do not use @group; group classification is retired. Repeat metadata when it changes.',
     import_guide_answers:
       'ANS is one letter that must match an available option. EXP_BN and EXP_EN explain the answer concisely. DIFF is easy, medium, hard or expert. TAGS is 3-8 lowercase English topic tags. Use A: instead of A_BN/A_EN when both languages are identical.',
     import_guide_separator:
       'Put a line containing only --- between consecutive questions. Do not number questions, add commentary or wrap the output in Markdown or code fences.',
     import_guide_errors:
-      'Common errors: missing ANS, option gaps, an answer that does not match an option, unknown @headers, and two questions without a --- separator.',
+      'Common errors: missing ANS, option gaps, an answer that does not match an option, missing @institution or @unit on Admission, unknown @headers (including retired @group), and two questions without a --- separator.',
 
     // Plain-text review
     text_review_title: 'Review Structured Plain Text',
@@ -622,17 +622,17 @@ export const translations = {
     import_guide_inputs:
       'সমর্থিত ইনপুট: পেস্ট করা টেক্সট, ক্যামেরা, গ্যালারির ছবি, টেক্সট ও স্ক্যান করা PDF, UTF-8 CSV এবং TXT ফাইল, এবং একই সেশনে এদের যেকোনো মিশ্রণ।',
     import_guide_csv:
-      'CSV আপনার ব্রাউজারেই পড়া হয়। হেডার সারি আবশ্যক; q_text_bn, q_text_en, opt_1_bn ... opt_4_en, correct_opt (১-ভিত্তিক), exp_bn, exp_en, difficulty, tags ও source_type কলামগুলো প্রশ্ন ব্লকে রূপান্তরিত হয়।',
+      'CSV আপনার ব্রাউজারেই পড়া হয়। হেডার সারি আবশ্যক; q_text_bn, q_text_en, opt_1_bn ... opt_4_en, correct_opt (১-ভিত্তিক), exp_bn, exp_en, difficulty, tags, source_type, institution_name, unit_name এবং session (বা year) কলামগুলো প্রশ্ন ব্লকে রূপান্তরিত হয়।',
     import_guide_fields:
       'প্রতি প্রশ্নে আবশ্যক: Q_BN বা Q_EN, A-D (সর্বোচ্চ F) অপশন এবং ANS। প্রস্তাবিত: দ্বিভাষিক অপশন, EXP_BN, EXP_EN, DIFF এবং ৩-৮টি ছোট হাতের TAGS।',
     import_guide_metadata:
-      'মেটাডেটা: @source (admission, model_test, guidebook বা unknown), @institution (প্রতিষ্ঠানের সরকারি ইংরেজি নাম), @exam, @unit, @year ও @tags। প্রতিষ্ঠান, বছর বা ইউনিট বদলালে পরের প্রশ্নের আগে মেটাডেটা আবার লিখুন।',
+      'মেটাডেটা: @source (admission, model_test, guidebook বা unknown), @institution, @exam, @unit, @session (অথবা পুরোনো @year) ও @tags। Admission প্রশ্নে @institution এবং @unit—দুটিই আবশ্যক। Model Test, Guidebook ও Unknown-এ প্রতিষ্ঠান/Unit বাদ দেওয়া যায়। Unit দিলে প্রতিষ্ঠানও দিন। @group ব্যবহার করবেন না—group classification আর ব্যবহৃত হয় না। মেটাডেটা বদলালে আবার লিখুন।',
     import_guide_answers:
       'ANS একটি অক্ষর, যা অবশ্যই কোনো অপশনের সাথে মিলতে হবে। EXP_BN ও EXP_EN সংক্ষেপে উত্তর ব্যাখ্যা করে। DIFF হলো easy, medium, hard বা expert। TAGS হলো ৩-৮টি ছোট হাতের ইংরেজি ট্যাগ। দুই ভাষার অপশন একই হলে A_BN/A_EN এর বদলে A: ব্যবহার করুন।',
     import_guide_separator:
       'পরপর প্রশ্নের মাঝে শুধু --- থাকা একটি লাইন দিন। প্রশ্নে নম্বর দেবেন না, ভূমিকা বা মন্তব্য যোগ করবেন না, এবং আউটপুট Markdown বা code fence-এ মুড়বেন না।',
     import_guide_errors:
-      'সাধারণ ভুল: ANS না থাকা, অপশনে ফাঁক, উত্তরের অক্ষর কোনো অপশনের সাথে না মেলা, অজানা @হেডার, এবং --- ছাড়া দুটি প্রশ্ন একসাথে থাকা।',
+      'সাধারণ ভুল: ANS না থাকা, অপশনে ফাঁক, উত্তর কোনো অপশনের সাথে না মেলা, Admission-এ @institution বা @unit না দেওয়া, অজানা @হেডার (পুরোনো @group-সহ), এবং --- ছাড়া দুটি প্রশ্ন একসাথে থাকা।',
 
     // Plain-text review
     text_review_title: 'Structured Plain Text রিভিউ',

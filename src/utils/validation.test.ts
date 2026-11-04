@@ -43,6 +43,46 @@ test('validateForImport accepts an admin-compatible question', () => {
   assert.equal(result.status, 'valid');
 });
 
+test('Admission imports require institution and unit in one reference', () => {
+  const missingBoth = validateForImport(
+    question({ source_type: 'admission', exam_references: [] })
+  );
+  assert.ok(missingBoth.errors.some((error) => error.includes('institution and an admission unit')));
+
+  const missingUnit = validateForImport(
+    question({
+      source_type: 'admission',
+      exam_references: [{ source_kind: 'admission', institution_name: 'University of Dhaka' }],
+    })
+  );
+  assert.ok(missingUnit.errors.some((error) => error.includes('institution and an admission unit')));
+
+  const missingInstitution = validateForImport(
+    question({
+      source_type: 'admission',
+      exam_references: [{ source_kind: 'admission', unit_name: 'A' }],
+    })
+  );
+  assert.ok(missingInstitution.errors.some((error) => error.includes('institution and an admission unit')));
+
+  const complete = validateForImport(
+    question({
+      source_type: 'admission',
+      exam_references: [
+        { source_kind: 'admission', institution_name: 'University of Dhaka', unit_name: 'A' },
+      ],
+    })
+  );
+  assert.deepEqual(complete.errors, []);
+});
+
+test('model_test, guidebook and unknown imports allow missing institution and unit', () => {
+  for (const source_type of ['model_test', 'guidebook', 'unknown'] as const) {
+    const result = validateForImport(question({ source_type, exam_references: [] }));
+    assert.deepEqual(result.errors, [], source_type);
+  }
+});
+
 test('validateForImport requires the curriculum scope and English text', () => {
   const result = validateForImport(
     question({
