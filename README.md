@@ -55,6 +55,23 @@ missing the endpoint answers `503 EXTRACTION_NOT_CONFIGURED`.
 | `POST /content/questions/import-text` | Parse and import the approved plain text into Supabase. |
 | `POST /content/questions/import` | Existing admin JSON import (untouched). |
 
+## Android app (Capacitor)
+
+The same web build runs inside a Capacitor Android shell. Native camera,
+multi-image gallery selection, connectivity, app lifecycle and encrypted
+session storage are bridged into the existing extraction and import flow; the
+web build is unchanged. Requirements, permissions, plugin list, sync/debug/
+release commands, signing and known limitations are documented in
+[`docs/android.md`](docs/android.md).
+
+```bash
+npm run android:sync   # build the web app and copy it into android/
+npm run android:debug  # debug APK (requires JDK 21 + Android SDK 36)
+```
+
+The GitHub Actions workflow at `.github/workflows/android.yml` builds the
+debug APK on an Ubuntu runner and uploads it as an artifact.
+
 ## Deployment
 
 Deploy on Vercel with the existing `vercel.json` (Vite preset, `dist/`). Set
@@ -71,6 +88,9 @@ npm run build      # tsc -b && vite build
 npm run typecheck  # tsc -b
 npm test           # node --test
 npm run lint       # oxlint
+npm run android:sync    # build and sync the Android project
+npm run android:debug   # assemble a debug APK
+npm run android:release # assemble a signed release AAB
 ```
 
 ## Template notes

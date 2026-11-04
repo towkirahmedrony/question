@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '../config/apiConfig';
 import { clearSession, getValidAccessToken, notifyUnauthorized } from './authService';
+import { httpFetch } from './http';
 
 /** Typed transport error so views can distinguish auth failures from other 4xx. */
 export class ApiError extends Error {
@@ -59,16 +60,20 @@ export const apiRequest = async <T>(
   let response: Response;
 
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      method: options.method ?? 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+    response = await httpFetch(
+      `${API_BASE_URL}${path}`,
+      {
+        method: options.method ?? 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
+        signal: controller.signal,
       },
-      ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
-      signal: controller.signal,
-    });
-  } catch (error) {
+      options.timeoutMs
+    );
+  } catch {
     if (controller.signal.aborted) {
       throw new ApiError(
         options.timeoutMs
@@ -78,7 +83,12 @@ export const apiRequest = async <T>(
         'REQUEST_ABORTED'
       );
     }
-    throw error;
+
+    throw new ApiError(
+      'The Porokh backend could not be reached. Check your connection and retry.',
+      0,
+      'NETWORK_ERROR'
+    );
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -87,7 +97,7 @@ export const apiRequest = async <T>(
 
   if (!response.ok) {
     if (response.status === 401) {
-      clearSession();
+      await clearSession();
       notifyUnauthorized();
     }
 

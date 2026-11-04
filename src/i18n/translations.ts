@@ -67,6 +67,18 @@ export const translations = {
     upload_extracted_missing_answers: 'Extracted {count} question(s). {missing} need a manual answer key.',
     upload_rejected_notice: '{count} partially readable question(s) were skipped and listed for manual review.',
     upload_extraction_failed: 'AI extraction failed. Please check the backend connection.',
+    upload_permission_denied: 'Camera or photo access was denied. Allow it in Android Settings and try again.',
+    upload_native_unavailable: 'The native picker is unavailable on this device. Use the file picker instead.',
+    upload_read_failed: 'The selected photo could not be read. Try another image.',
+    upload_move_up: 'Move up',
+    upload_move_down: 'Move down',
+    upload_retry: 'Retry',
+    draft_banner: 'Local draft from {date}. It is not imported and is not stored on the server.',
+    draft_discard: 'Discard draft',
+    offline_banner: 'No internet connection. Reconnect before extracting or importing questions.',
+    offline_extract_blocked: 'You are offline. Reconnect before extracting questions.',
+    import_background_paused:
+      'Extraction stopped when the app went to the background. Nothing was imported; retry to continue.',
 
     // Question Review
     review_title: 'Question Review & Editor',
@@ -424,6 +436,18 @@ export const translations = {
     upload_extracted_missing_answers: '{count}টি প্রশ্ন এক্সট্রাক্ট হয়েছে। {missing}টিতে উত্তর ম্যানুয়ালি নিশ্চিত করতে হবে।',
     upload_rejected_notice: '{count}টি আংশিক পাঠযোগ্য প্রশ্ন বাদ দেওয়া হয়েছে এবং ম্যানুয়াল রিভিউয়ের জন্য তালিকাভুক্ত হয়েছে।',
     upload_extraction_failed: 'এআই এক্সট্রাকশন ব্যর্থ হয়েছে। ব্যাকএন্ড সংযোগ যাচাই করুন।',
+    upload_permission_denied: 'ক্যামেরা বা ছবির অনুমতি দেওয়া হয়নি। Android সেটিংসে অনুমতি দিয়ে আবার চেষ্টা করুন।',
+    upload_native_unavailable: 'এই ডিভাইসে নেটিভ পিকার পাওয়া যাচ্ছে না। ফাইল পিকার ব্যবহার করুন।',
+    upload_read_failed: 'নির্বাচিত ছবিটি পড়া যায়নি। অন্য ছবি চেষ্টা করুন।',
+    upload_move_up: 'উপরে সরান',
+    upload_move_down: 'নিচে সরান',
+    upload_retry: 'আবার চেষ্টা',
+    draft_banner: 'স্থানীয় খসড়া ({date})। এটি এখনও ইমপোর্ট হয়নি এবং সার্ভারে সংরক্ষিত নয়।',
+    draft_discard: 'খসড়া বাতিল',
+    offline_banner: 'ইন্টারনেট সংযোগ নেই। প্রশ্ন এক্সট্রাক্ট বা ইমপোর্টের আগে সংযোগ করুন।',
+    offline_extract_blocked: 'আপনি অফলাইনে আছেন। এক্সট্রাকশনের আগে ইন্টারনেট সংযোগ দিন।',
+    import_background_paused:
+      'অ্যাপ ব্যাকগ্রাউন্ডে যাওয়ায় এক্সট্রাকশন থেমে গেছে। কিছুই ইমপোর্ট হয়নি; চালিয়ে যেতে আবার চেষ্টা করুন।',
 
     // Question Review
     review_title: 'প্রশ্ন রিভিউ ও এডিটর',

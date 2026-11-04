@@ -1,4 +1,5 @@
 import type { ImportSourceKind, PreparedUnit } from '../types/import';
+import { renderImageToJpeg } from '../utils/imageProcessing.ts';
 
 /**
  * Client-side content extraction for every supported input.
@@ -378,22 +379,6 @@ const blobToBase64 = (blob: Blob): Promise<string> =>
     reader.readAsDataURL(blob);
   });
 
-const loadImage = (file: File): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const image = new Image();
-
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error(`"${file.name}" could not be decoded as an image.`));
-    };
-    image.src = url;
-  });
-
 /**
  * Downscales a photo for extraction. Mobile cameras produce very large files;
  * capping the long edge keeps the request small without losing readable text.
@@ -402,27 +387,7 @@ export const prepareImage = async (
   file: File,
   maxEdge = 1800
 ): Promise<{ mime_type: string; data: string }> => {
-  const image = await loadImage(file);
-  const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
-  const width = Math.max(1, Math.round(image.naturalWidth * scale));
-  const height = Math.max(1, Math.round(image.naturalHeight * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('The browser could not prepare the image.');
-
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob((value) => resolve(value), 'image/jpeg', 0.85)
-  );
-
-  if (!blob) throw new Error(`"${file.name}" could not be converted to JPEG.`);
+  const blob = await renderImageToJpeg(file, maxEdge);
 
   return { mime_type: 'image/jpeg', data: await blobToBase64(blob) };
 };

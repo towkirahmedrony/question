@@ -1,4 +1,8 @@
 import { API_BASE_URL, SUPABASE_ANON_KEY, SUPABASE_URL, isAuthConfigured } from '../config/apiConfig';
+import type { ImporterIdentity, ImporterSession } from '../types/auth';
+import { parseStoredSession, sessionNeedsRefresh } from '../utils/session';
+import { httpFetch } from './http';
+import { readRawSession, removeRawSession, writeRawSession } from './sessionStore';
 
 /**
  * Supabase Auth over its public REST endpoint.
@@ -8,23 +12,10 @@ import { API_BASE_URL, SUPABASE_ANON_KEY, SUPABASE_URL, isAuthConfigured } from 
  * keeps the token handling in one auditable place.
  */
 
-export interface ImporterSession {
-  access_token: string;
-  refresh_token: string;
-  /** Seconds since the epoch, as Supabase reports it. */
-  expires_at: number;
-  user: { id: string; email: string };
-}
-
-export interface ImporterIdentity {
-  role: string;
-  permissions: string[];
-}
+export type { ImporterIdentity, ImporterSession } from '../types/auth';
 
 /** Roles the backend accepts on the question authoring routes. */
 const IMPORTER_ROLES = ['super_admin', 'admin', 'editor', 'teacher'];
-
-const STORAGE_KEY = 'porokh_importer_session';
 
 type SupabaseTokenResponse = {
   access_token?: string;
@@ -53,39 +44,49 @@ export const notifyUnauthorized = (): void => {
   unauthorizedListeners.forEach((listener) => listener());
 };
 
-export const readStoredSession = (): ImporterSession | null => {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
+/** Avoids a secure-storage round trip on every API call. */
+let memorySession: ImporterSession | null | undefined;
+let refreshInFlight: { generation: number; promise: Promise<ImporterSession> } | null = null;
 
-    const parsed = JSON.parse(raw) as Partial<ImporterSession>;
-    if (!parsed?.access_token || !parsed.refresh_token || !parsed.user?.id) return null;
+/**
+ * Incremented whenever the session is cleared. A refresh that started before
+ * sign-out must not write its result back afterwards. Storage writes are also
+ * serialized so a slow write cannot finish after the remove that followed it.
+ */
+let sessionGeneration = 0;
+let storageWrites: Promise<void> = Promise.resolve();
 
-    return {
-      access_token: parsed.access_token,
-      refresh_token: parsed.refresh_token,
-      expires_at: Number(parsed.expires_at) || 0,
-      user: { id: parsed.user.id, email: parsed.user.email ?? '' },
-    };
-  } catch {
-    return null;
-  }
+const enqueueStorageWrite = (operation: () => Promise<void>): Promise<void> => {
+  const next = storageWrites.then(operation, operation);
+  storageWrites = next.catch(() => undefined);
+  return next;
 };
 
-const storeSession = (session: ImporterSession): void => {
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  } catch {
-    // A blocked storage API must not break a valid in-memory session.
-  }
+export const readStoredSession = async (): Promise<ImporterSession | null> => {
+  if (memorySession !== undefined) return memorySession;
+
+  memorySession = parseStoredSession(await readRawSession());
+  return memorySession;
 };
 
-export const clearSession = (): void => {
-  try {
-    sessionStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Ignore storage failures while clearing.
-  }
+const storeSession = async (
+  session: ImporterSession,
+  generation: number = sessionGeneration
+): Promise<void> => {
+  if (generation !== sessionGeneration) return;
+
+  memorySession = session;
+  await enqueueStorageWrite(async () => {
+    if (generation !== sessionGeneration) return;
+    await writeRawSession(JSON.stringify(session));
+  });
+};
+
+export const clearSession = async (): Promise<void> => {
+  sessionGeneration += 1;
+  refreshInFlight = null;
+  memorySession = null;
+  await enqueueStorageWrite(removeRawSession);
 };
 
 const assertConfigured = (): void => {
@@ -145,7 +146,7 @@ const requestToken = async (
   let response: Response;
 
   try {
-    response = await fetch(url, {
+    response = await httpFetch(url, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_ANON_KEY,
@@ -191,40 +192,59 @@ const requestToken = async (
   return toSession(payload);
 };
 
-/** Password sign-in against Supabase Auth; stores the session for this tab. */
+/** Password sign-in against Supabase Auth; stores the session securely. */
 export const signIn = async (email: string, password: string): Promise<ImporterSession> => {
   const session = await requestToken('password', { email: email.trim(), password });
-  storeSession(session);
+  sessionGeneration += 1;
+  refreshInFlight = null;
+  await storeSession(session, sessionGeneration);
   return session;
 };
 
-const refreshSession = async (session: ImporterSession): Promise<ImporterSession> => {
+const refreshSession = async (
+  session: ImporterSession,
+  generation: number
+): Promise<ImporterSession> => {
   const next = await requestToken('refresh_token', { refresh_token: session.refresh_token });
-  storeSession(next);
+  await storeSession(next, generation);
   return next;
 };
 
 /** Returns a usable access token, refreshing it when it is close to expiry. */
 export const getValidAccessToken = async (): Promise<string> => {
-  const session = readStoredSession();
+  const session = await readStoredSession();
   if (!session) throw new Error('Not signed in.');
 
-  const secondsLeft = session.expires_at - Math.floor(Date.now() / 1000);
-  if (secondsLeft > 60) return session.access_token;
+  if (!sessionNeedsRefresh(session)) return session.access_token;
+
+  const generation = sessionGeneration;
 
   try {
-    const next = await refreshSession(session);
-    return next.access_token;
+    // Concurrent requests share one refresh instead of invalidating each other.
+    // A refresh from a previous session generation is never reused.
+    if (!refreshInFlight || refreshInFlight.generation !== generation) {
+      const promise = refreshSession(session, generation).finally(() => {
+        if (refreshInFlight?.promise === promise) refreshInFlight = null;
+      });
+      refreshInFlight = { generation, promise };
+    }
+
+    const refreshed = await refreshInFlight.promise;
+    if (generation !== sessionGeneration) throw new Error('Not signed in.');
+    return refreshed.access_token;
   } catch (error) {
-    clearSession();
-    notifyUnauthorized();
+    if (generation === sessionGeneration) {
+      await clearSession();
+      notifyUnauthorized();
+    }
+
     throw error;
   }
 };
 
 /** Restores a stored session on load, dropping one that can no longer refresh. */
 export const restoreSession = async (): Promise<ImporterSession | null> => {
-  const session = readStoredSession();
+  const session = await readStoredSession();
   if (!session) return null;
 
   try {
@@ -266,7 +286,7 @@ export const fetchImporterIdentity = async (token: string): Promise<ImporterIden
   let response: Response;
 
   try {
-    response = await fetch(url, {
+    response = await httpFetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch (error) {
@@ -309,13 +329,13 @@ export const canImportQuestions = (identity: ImporterIdentity): boolean =>
 
 /** Best-effort session revoke, then local sign-out. */
 export const signOut = async (): Promise<void> => {
-  const session = readStoredSession();
-  clearSession();
+  const session = await readStoredSession();
+  await clearSession();
 
   if (!session) return;
 
   try {
-    await fetch(`${API_BASE_URL}/auth/logout`, {
+    await httpFetch(`${API_BASE_URL}/auth/logout`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
