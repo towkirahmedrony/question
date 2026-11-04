@@ -39,7 +39,10 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200">
       {/* Phase notice */}
-      <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white text-xs px-4 py-1.5 flex items-center justify-between">
+      <div
+        className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white text-xs px-4 pb-1.5 flex items-center justify-between"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.375rem)' }}
+      >
         <div className="flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap max-w-[85%]">
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-white/10 border border-white/20">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />

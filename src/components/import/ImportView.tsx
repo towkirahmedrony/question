@@ -3,14 +3,19 @@ import { useLanguage } from '../../i18n/useLanguage';
 import type { ImportSource } from '../../types/import';
 import { FormatGuide } from './FormatGuide';
 import { classifyFile } from '../../services/sourceProcessing';
+import { isNativeApp } from '../../services/platform';
+import type { ImagePickSource } from '../../utils/imagePick';
 import {
   AlertCircle,
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Camera,
   FileSpreadsheet,
   FileText,
   Image as ImageIcon,
   Loader2,
+  RefreshCw,
   Sparkles,
   Trash2,
   UploadCloud,
@@ -22,11 +27,15 @@ interface ImportViewProps {
   pastedText: string;
   onPasteChange: (text: string) => void;
   onAddFiles: (files: File[]) => void;
+  onPickImages: (source: ImagePickSource) => Promise<void>;
   onRemoveSource: (id: string) => void;
+  onMoveSource: (id: string, direction: -1 | 1) => void;
+  onRetrySource: (id: string) => void;
   onClearAll: () => void;
   onProcess: () => void;
   onCancel: () => void;
   isExtracting: boolean;
+  isOnline: boolean;
   progress: { current: number; total: number; label: string } | null;
   questionCount: number;
   onContinue: () => void;
@@ -49,11 +58,15 @@ export const ImportView: React.FC<ImportViewProps> = ({
   pastedText,
   onPasteChange,
   onAddFiles,
+  onPickImages,
   onRemoveSource,
+  onMoveSource,
+  onRetrySource,
   onClearAll,
   onProcess,
   onCancel,
   isExtracting,
+  isOnline,
   progress,
   questionCount,
   onContinue,
@@ -61,9 +74,20 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const { t } = useLanguage();
   const [validationError, setValidationError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [isPicking, setIsPicking] = useState(false);
   const filesInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const native = isNativeApp();
+
+  const pickImages = async (source: ImagePickSource) => {
+    setIsPicking(true);
+    try {
+      await onPickImages(source);
+    } finally {
+      setIsPicking(false);
+    }
+  };
 
   const acceptFiles = (files: FileList | File[]) => {
     setValidationError(null);
@@ -87,7 +111,8 @@ export const ImportView: React.FC<ImportViewProps> = ({
     if (event.dataTransfer.files.length > 0) acceptFiles(event.dataTransfer.files);
   };
 
-  const canProcess = (pastedText.trim() !== '' || sources.length > 0) && !isExtracting;
+  const canProcess =
+    (pastedText.trim() !== '' || sources.length > 0) && !isExtracting && isOnline;
 
   return (
     <div className="space-y-5 pb-12">
@@ -193,20 +218,34 @@ export const ImportView: React.FC<ImportViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => photosInputRef.current?.click()}
-            disabled={isExtracting}
+            onClick={() => {
+              if (native) void pickImages('gallery');
+              else photosInputRef.current?.click();
+            }}
+            disabled={isExtracting || isPicking}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 font-semibold text-xs sm:text-sm hover:bg-slate-50 transition-colors disabled:opacity-50"
           >
-            <ImageIcon className="w-4 h-4 text-indigo-600" />
+            {isPicking ? (
+              <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
+            ) : (
+              <ImageIcon className="w-4 h-4 text-indigo-600" />
+            )}
             {t.import_add_photos}
           </button>
           <button
             type="button"
-            onClick={() => cameraInputRef.current?.click()}
-            disabled={isExtracting}
+            onClick={() => {
+              if (native) void pickImages('camera');
+              else cameraInputRef.current?.click();
+            }}
+            disabled={isExtracting || isPicking}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm transition-colors disabled:opacity-50"
           >
-            <Camera className="w-4 h-4 text-emerald-400" />
+            {isPicking ? (
+              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+            ) : (
+              <Camera className="w-4 h-4 text-emerald-400" />
+            )}
             {t.import_take_photo}
           </button>
         </div>
@@ -230,16 +269,16 @@ export const ImportView: React.FC<ImportViewProps> = ({
           </div>
 
           <ul className="divide-y divide-slate-100">
-            {sources.map((source) => (
-              <li key={source.id} className="flex items-center gap-3 px-4 py-3">
+            {sources.map((source, index) => (
+              <li key={source.id} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3">
                 {source.previewUrl ? (
                   <img
                     src={source.previewUrl}
                     alt={source.name}
-                    className="w-11 h-11 rounded-lg object-cover border border-slate-200 bg-slate-100"
+                    className="w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-lg object-cover border border-slate-200 bg-slate-100"
                   />
                 ) : (
-                  <div className="w-11 h-11 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                  <div className="w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
                     {kindIcon(source.kind)}
                   </div>
                 )}
@@ -256,6 +295,42 @@ export const ImportView: React.FC<ImportViewProps> = ({
                     <p className="text-[11px] text-rose-700 mt-0.5">{source.error}</p>
                   )}
                 </div>
+
+                <div className="shrink-0 flex flex-col items-center">
+                  <button
+                    type="button"
+                    onClick={() => onMoveSource(source.id, -1)}
+                    disabled={index === 0 || isExtracting}
+                    className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30"
+                    title={t.upload_move_up}
+                    aria-label={t.upload_move_up}
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMoveSource(source.id, 1)}
+                    disabled={index === sources.length - 1 || isExtracting}
+                    className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30"
+                    title={t.upload_move_down}
+                    aria-label={t.upload_move_down}
+                  >
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {source.status === 'error' && (
+                  <button
+                    type="button"
+                    onClick={() => onRetrySource(source.id)}
+                    disabled={isExtracting || !isOnline}
+                    className="shrink-0 p-1.5 rounded-lg text-amber-600 hover:text-amber-800 hover:bg-amber-50 disabled:opacity-40"
+                    title={t.upload_retry}
+                    aria-label={t.upload_retry}
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                )}
 
                 <span
                   className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
@@ -284,7 +359,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
                   type="button"
                   onClick={() => onRemoveSource(source.id)}
                   disabled={isExtracting}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+                  className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-40"
                   title={t.import_remove}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -297,6 +372,12 @@ export const ImportView: React.FC<ImportViewProps> = ({
 
       {/* Extraction controls */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 sm:p-5 shadow-xs space-y-3">
+        {!isOnline && (
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-rose-700">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            {t.offline_extract_blocked}
+          </p>
+        )}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />

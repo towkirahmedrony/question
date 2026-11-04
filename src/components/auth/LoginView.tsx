@@ -32,7 +32,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignIn, initialError }) 
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-10">
+    <div
+      className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-10"
+      style={{
+        paddingTop: 'calc(env(safe-area-inset-top) + 2.5rem)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom) + 2.5rem)',
+      }}
+    >
       <div className="w-full max-w-md space-y-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">

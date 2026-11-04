@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { AlertCircle, History, X } from 'lucide-react';
 import { LanguageProvider } from './i18n/LanguageContext';
 import { useLanguage } from './i18n/useLanguage';
 import { Header } from './components/common/Header';
@@ -25,6 +27,12 @@ import { runExtraction } from './services/aiExtractionService';
 import { fetchImportHistory } from './services/importService';
 import { readErrorMessage } from './services/apiClient';
 import { countQuestionBlocks } from './utils/plainText';
+import { pickNativeImages } from './services/imagePickerService';
+import { isNativeApp } from './services/platform';
+import { clearImporterDraft, loadImporterDraft, saveImporterDraft } from './services/draftService';
+import { useNetworkStatus } from './hooks/useNetworkStatus';
+import type { ImagePickSource } from './utils/imagePick';
+import type { ImagePickRejection } from './services/imagePickerService';
 import {
   type ImporterIdentity,
   type ImporterSession,
@@ -38,6 +46,7 @@ import {
 
 export function AppContent() {
   const { t } = useLanguage();
+  const isOnline = useNetworkStatus();
 
   const [session, setSession] = useState<ImporterSession | null>(null);
   const [identity, setIdentity] = useState<ImporterIdentity | null>(null);
@@ -57,12 +66,15 @@ export function AppContent() {
     null
   );
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [draftInfo, setDraftInfo] = useState<{ savedAt: string } | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
 
   const [history, setHistory] = useState<ImportHistoryEntry[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   const extractionAbort = useRef<AbortController | null>(null);
+  const backgroundInterrupted = useRef(false);
   const questionCount = useMemo(() => countQuestionBlocks(plainText), [plainText]);
 
   const addToast = useCallback(
@@ -147,6 +159,8 @@ export function AppContent() {
         extractionAbort.current?.abort();
         setSession(null);
         setIdentity(null);
+        setDraftInfo(null);
+        setDraftReady(false);
         resetBatch();
         setAuthError(t.auth_session_expired);
       }),
@@ -157,6 +171,72 @@ export function AppContent() {
     if (!session) return;
     void refreshHistory();
   }, [session, refreshHistory]);
+
+  // A local draft is text only: selected files and server-side extraction
+  // cannot be resumed after the app process is killed.
+  useEffect(() => {
+    if (!session) return;
+
+    let active = true;
+
+    void loadImporterDraft(session.user.id).then((draft) => {
+      if (!active) return;
+
+      if (draft) {
+        setPastedText(draft.pastedText);
+        setPlainText(draft.plainText);
+        setDraftInfo({ savedAt: draft.savedAt });
+        setCurrentTab(draft.plainText.trim() !== '' ? 'review' : 'upload');
+      }
+
+      setDraftReady(true);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  // Persist the editable text so a killed WebView does not lose the batch.
+  useEffect(() => {
+    if (!session || !draftReady) return;
+
+    const timer = setTimeout(() => {
+      void saveImporterDraft(session.user.id, { pastedText, plainText });
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [session, draftReady, pastedText, plainText]);
+
+  // An extraction in flight cannot survive the WebView being suspended.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+
+    let active = true;
+    let removeListener: (() => void) | undefined;
+
+    void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive && extractionAbort.current) {
+        backgroundInterrupted.current = true;
+        extractionAbort.current.abort();
+      }
+    })
+      .then((handle) => {
+        removeListener = () => {
+          void handle.remove();
+        };
+        if (!active) removeListener();
+      })
+      .catch(() => {
+        // Lifecycle handling is native-only; the page visibility below is not
+        // needed because extraction already aborts on network failure.
+      });
+
+    return () => {
+      active = false;
+      removeListener?.();
+    };
+  }, []);
 
   const handleSignIn = useCallback(
     async (email: string, password: string) => {
@@ -182,14 +262,17 @@ export function AppContent() {
   );
 
   const handleSignOut = useCallback(async () => {
+    if (session) await clearImporterDraft(session.user.id);
     await signOut();
     setSession(null);
     setIdentity(null);
+    setDraftInfo(null);
+    setDraftReady(false);
     resetBatch();
     setHistory([]);
     setCurrentTab('dashboard');
     setAuthError(null);
-  }, [resetBatch]);
+  }, [session, resetBatch]);
 
   const updateSource = useCallback((id: string, patch: Partial<ImportSource>) => {
     setSources((prev) => prev.map((source) => (source.id === id ? { ...source, ...patch } : source)));
@@ -220,6 +303,64 @@ export function AppContent() {
     }
   }, [addToast]);
 
+  const rejectionMessage = useCallback(
+    (rejection: ImagePickRejection): string => {
+      const reason =
+        rejection.reason === 'size'
+          ? t.upload_error_size
+          : rejection.reason === 'empty'
+            ? t.upload_error_empty
+            : rejection.reason === 'read'
+              ? t.upload_read_failed
+              : t.upload_error_type;
+
+      return `${rejection.name}: ${reason}`;
+    },
+    [
+      t.upload_error_empty,
+      t.upload_error_size,
+      t.upload_error_type,
+      t.upload_read_failed,
+    ]
+  );
+
+  const handlePickImages = useCallback(
+    async (source: ImagePickSource) => {
+      const result = await pickNativeImages(source);
+
+      if (result.status === 'cancelled') return;
+
+      if (result.status === 'denied') {
+        addToast(t.upload_permission_denied, 'error');
+        return;
+      }
+
+      if (result.status === 'unavailable') {
+        addToast(t.upload_native_unavailable, 'warning');
+        return;
+      }
+
+      if (result.status === 'failed') {
+        addToast(readErrorMessage(new Error(result.message), t.upload_read_failed), 'error');
+        return;
+      }
+
+      if (result.files.length > 0) handleAddFiles(result.files);
+
+      for (const rejection of result.rejected.slice(0, 3)) {
+        addToast(rejectionMessage(rejection), 'warning');
+      }
+    },
+    [
+      addToast,
+      handleAddFiles,
+      rejectionMessage,
+      t.upload_native_unavailable,
+      t.upload_permission_denied,
+      t.upload_read_failed,
+    ]
+  );
+
   const handleRemoveSource = useCallback(
     (id: string) => {
       setSources((prev) => {
@@ -231,10 +372,25 @@ export function AppContent() {
     [releaseSources]
   );
 
+  const handleMoveSource = useCallback((id: string, direction: -1 | 1) => {
+    setSources((prev) => {
+      const index = prev.findIndex((source) => source.id === id);
+      const target = index + direction;
+
+      if (index === -1 || target < 0 || target >= prev.length) return prev;
+
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }, []);
+
   const handleClearAll = useCallback(() => {
     resetBatch();
+    if (session) void clearImporterDraft(session.user.id);
+    setDraftInfo(null);
     addToast('Batch cleared.', 'warning');
-  }, [resetBatch, addToast]);
+  }, [resetBatch, session, addToast]);
 
   const prepareSource = async (
     source: ImportSource,
@@ -299,6 +455,11 @@ export function AppContent() {
   const handleProcess = async () => {
     if (isExtracting) return;
 
+    if (!isOnline) {
+      addToast(t.offline_extract_blocked, 'warning');
+      return;
+    }
+
     if (pastedText.trim() === '' && sources.length === 0) {
       addToast(t.import_empty, 'warning');
       return;
@@ -306,6 +467,7 @@ export function AppContent() {
 
     const controller = new AbortController();
     extractionAbort.current = controller;
+    backgroundInterrupted.current = false;
     setIsExtracting(true);
     setExtractionWarnings([]);
     setExtractionFailures([]);
@@ -427,7 +589,12 @@ export function AppContent() {
         addToast(t.import_partial_failure.replace('{count}', String(failures.length)), 'warning');
       }
 
-      if (cancelled) addToast(t.import_cancelled, 'warning');
+      if (cancelled) {
+        addToast(
+          backgroundInterrupted.current ? t.import_background_paused : t.import_cancelled,
+          'warning'
+        );
+      }
 
       if (controller.signal.aborted) {
         setSources((prev) =>
@@ -438,10 +605,81 @@ export function AppContent() {
       }
     } catch (error) {
       if (controller.signal.aborted) {
-        addToast(t.import_cancelled, 'warning');
+        addToast(
+          backgroundInterrupted.current ? t.import_background_paused : t.import_cancelled,
+          'warning'
+        );
       } else {
         addToast(readErrorMessage(error, t.import_extraction_failed), 'error');
       }
+    } finally {
+      extractionAbort.current = null;
+      backgroundInterrupted.current = false;
+      setIsExtracting(false);
+      setProgress(null);
+    }
+  };
+
+  const handleRetrySource = async (id: string) => {
+    if (isExtracting) return;
+
+    if (!isOnline) {
+      addToast(t.offline_extract_blocked, 'warning');
+      return;
+    }
+
+    const source = sources.find((item) => item.id === id);
+    if (!source?.rawFile) return;
+
+    const controller = new AbortController();
+    extractionAbort.current = controller;
+    setIsExtracting(true);
+    updateSource(id, { status: 'processing', error: undefined });
+
+    try {
+      const result = await runExtraction(await prepareSource(source, controller.signal), {
+        signal: controller.signal,
+      });
+
+      if (result.plainText.trim() !== '') {
+        setPlainText((prev) => mergePlainTextParts([prev, result.plainText]));
+      }
+
+      setExtractionWarnings((prev) => [...new Set([...prev, ...result.warnings])]);
+      setExtractionFailures((prev) => [
+        ...prev.filter((item) => item.name !== source.name),
+        ...result.failures.map(({ name, error }) => ({ name, error })),
+      ]);
+
+      if (result.cancelled) {
+        updateSource(id, { status: 'pending' });
+        addToast(t.import_cancelled, 'warning');
+      } else if (result.failures.length > 0) {
+        updateSource(id, { status: 'error', error: result.failures[0].error });
+      } else {
+        updateSource(id, { status: 'done', error: undefined });
+
+        if (result.plainText.trim() !== '') {
+          addToast(
+            t.import_extracted_success.replace(
+              '{count}',
+              String(countQuestionBlocks(result.plainText))
+            ),
+            'success'
+          );
+        } else {
+          addToast(t.import_no_questions, 'warning');
+        }
+      }
+    } catch (error) {
+      const message = controller.signal.aborted
+        ? t.import_cancelled
+        : readErrorMessage(error, t.import_error_file);
+      updateSource(id, {
+        status: controller.signal.aborted ? 'pending' : 'error',
+        error: controller.signal.aborted ? undefined : message,
+      });
+      addToast(message, controller.signal.aborted ? 'warning' : 'error');
     } finally {
       extractionAbort.current = null;
       setIsExtracting(false);
@@ -470,7 +708,7 @@ export function AppContent() {
 
   if (isBootstrapping) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
         <p className="text-sm text-slate-500">{t.auth_signing_in}</p>
       </div>
     );
@@ -481,7 +719,7 @@ export function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-slate-50 flex flex-col overflow-x-hidden selection:bg-indigo-500 selection:text-white">
       <Header
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
@@ -490,7 +728,46 @@ export function AppContent() {
         onSignOut={() => void handleSignOut()}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {draftInfo && (
+        <div className="bg-amber-50 border-b border-amber-200">
+          <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-start gap-2 text-xs text-amber-900">
+            <History className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="flex-1 leading-relaxed">
+              {t.draft_banner.replace(
+                '{date}',
+                new Date(draftInfo.savedAt).toLocaleString()
+              )}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                void clearImporterDraft(session.user.id);
+                setDraftInfo(null);
+                setPastedText('');
+                setPlainText('');
+                setExtractionWarnings([]);
+                setExtractionFailures([]);
+                setCurrentTab('upload');
+              }}
+              className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white/70 px-2 py-1 font-semibold hover:bg-white"
+            >
+              <X className="w-3.5 h-3.5" />
+              {t.draft_discard}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isOnline && (
+        <div role="status" className="bg-rose-50 border-b border-rose-200">
+          <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 text-xs font-medium text-rose-800">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{t.offline_banner}</span>
+          </div>
+        </div>
+      )}
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-28 md:py-6">
         {currentTab === 'dashboard' && (
           <DashboardView
             onStartUpload={() => setCurrentTab('upload')}
@@ -508,11 +785,15 @@ export function AppContent() {
             pastedText={pastedText}
             onPasteChange={setPastedText}
             onAddFiles={handleAddFiles}
+            onPickImages={handlePickImages}
             onRemoveSource={handleRemoveSource}
+            onMoveSource={handleMoveSource}
+            onRetrySource={(id) => void handleRetrySource(id)}
             onClearAll={handleClearAll}
             onProcess={() => void handleProcess()}
             onCancel={handleCancel}
             isExtracting={isExtracting}
+            isOnline={isOnline}
             progress={progress}
             questionCount={questionCount}
             onContinue={() => setCurrentTab('review')}
@@ -538,6 +819,8 @@ export function AppContent() {
             onBack={() => setCurrentTab('review')}
             onStartNewBatch={() => {
               resetBatch();
+              void clearImporterDraft(session.user.id);
+              setDraftInfo(null);
               setCurrentTab('upload');
             }}
             onShowToast={addToast}

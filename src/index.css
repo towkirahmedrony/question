@@ -5,6 +5,11 @@
     --font-bengali: 'Hind Siliguri', 'Noto Sans Bengali', 'SolaimanLipi', system-ui, sans-serif;
   }
 
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
   body {
     background-color: #f8fafc;
     color: #0f172a;
